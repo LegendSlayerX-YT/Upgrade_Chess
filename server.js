@@ -13,6 +13,90 @@ const io = new Server(server);
 let waitingSocketId = null;
 const games = new Map();
 const socketToGame = new Map();
+const pendingLevels = new Map();
+
+const PIECE_BASE = {
+  p: { hp: 10, dmg: 10 },
+  n: { hp: 10, dmg: 10 },
+  b: { hp: 10, dmg: 10 },
+  r: { hp: 10, dmg: 10 },
+  q: { hp: 10, dmg: 10 },
+  k: { hp: 10, dmg: 10 },
+};
+
+const SLOT_TO_START_SQUARE = {
+  Ra: 'a1', Nb: 'b1', Bc: 'c1', Q: 'd1', K: 'e1', Bf: 'f1', Ng: 'g1', Rh: 'h1',
+  Pa: 'a2', Pb: 'b2', Pc: 'c2', Pd: 'd2', Pe: 'e2', Pf: 'f2', Pg: 'g2', Ph: 'h2',
+};
+const SLOT_TYPES = {
+  Ra: 'r', Nb: 'n', Bc: 'b', Q: 'q', K: 'k', Bf: 'b', Ng: 'n', Rh: 'r',
+  Pa: 'p', Pb: 'p', Pc: 'p', Pd: 'p', Pe: 'p', Pf: 'p', Pg: 'p', Ph: 'p',
+};
+
+function clampLevel(n) {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v) || v < 1) return 1;
+  if (v > 99) return 99;
+  return v;
+}
+
+function pieceStats(type, level) {
+  const base = PIECE_BASE[type];
+  return { hp: base.hp * level, dmg: base.dmg * level };
+}
+
+function buildPieces(whiteLevels, blackLevels) {
+  const pieces = {};
+  for (const slot of Object.keys(SLOT_TO_START_SQUARE)) {
+    const type = SLOT_TYPES[slot];
+    const wSquare = SLOT_TO_START_SQUARE[slot];
+    const bSquare = wSquare[0] + (wSquare[1] === '1' ? '8' : '7');
+
+    const wLevel = clampLevel(whiteLevels?.[slot] ?? 1);
+    const bLevel = clampLevel(blackLevels?.[slot] ?? 1);
+    const wStats = pieceStats(type, wLevel);
+    const bStats = pieceStats(type, bLevel);
+
+    pieces[wSquare] = { id: 'w' + slot, type, color: 'w', level: wLevel, hp: wStats.hp, dmg: wStats.dmg };
+    pieces[bSquare] = { id: 'b' + slot, type, color: 'b', level: bLevel, hp: bStats.hp, dmg: bStats.dmg };
+  }
+  return pieces;
+}
+
+function applyMoveToPieces(pieces, move) {
+  const next = { ...pieces };
+  const mover = next[move.from];
+  if (!mover) return next;
+  delete next[move.from];
+
+  if (move.flags.includes('e')) {
+    const epRank = move.color === 'w' ? '5' : '4';
+    delete next[move.to[0] + epRank];
+  } else if (move.flags.includes('c')) {
+    delete next[move.to];
+  }
+
+  if (move.flags.includes('k') || move.flags.includes('q')) {
+    const kingside = move.flags.includes('k');
+    const rank = move.color === 'w' ? '1' : '8';
+    const rookFrom = (kingside ? 'h' : 'a') + rank;
+    const rookTo = (kingside ? 'f' : 'd') + rank;
+    const rook = next[rookFrom];
+    if (rook) {
+      delete next[rookFrom];
+      next[rookTo] = rook;
+    }
+  }
+
+  if (move.promotion) {
+    const newType = move.promotion;
+    const stats = pieceStats(newType, mover.level);
+    next[move.to] = { ...mover, type: newType, hp: stats.hp, dmg: stats.dmg };
+  } else {
+    next[move.to] = mover;
+  }
+  return next;
+}
 
 function makeGameId() {
   return Math.random().toString(36).slice(2, 10);
@@ -21,9 +105,15 @@ function makeGameId() {
 function startGame(whiteSocket, blackSocket) {
   const gameId = makeGameId();
   const chess = new Chess();
+  const whiteLevels = pendingLevels.get(whiteSocket.id) || {};
+  const blackLevels = pendingLevels.get(blackSocket.id) || {};
+  pendingLevels.delete(whiteSocket.id);
+  pendingLevels.delete(blackSocket.id);
+  const pieces = buildPieces(whiteLevels, blackLevels);
   games.set(gameId, {
     id: gameId,
     chess,
+    pieces,
     white: whiteSocket.id,
     black: blackSocket.id,
     drawOfferBy: null,
@@ -34,8 +124,8 @@ function startGame(whiteSocket, blackSocket) {
   socketToGame.set(blackSocket.id, gameId);
   whiteSocket.join(gameId);
   blackSocket.join(gameId);
-  whiteSocket.emit('paired', { gameId, color: 'white', fen: chess.fen() });
-  blackSocket.emit('paired', { gameId, color: 'black', fen: chess.fen() });
+  whiteSocket.emit('paired', { gameId, color: 'white', fen: chess.fen(), pieces });
+  blackSocket.emit('paired', { gameId, color: 'black', fen: chess.fen(), pieces });
 }
 
 function pair(socket) {
@@ -81,7 +171,14 @@ function leaveEndedGame(socket) {
 }
 
 io.on('connection', (socket) => {
-  socket.on('findGame', () => {
+  socket.on('findGame', (payload) => {
+    if (payload && payload.levels && typeof payload.levels === 'object') {
+      const cleaned = {};
+      for (const slot of Object.keys(SLOT_TYPES)) {
+        cleaned[slot] = clampLevel(payload.levels[slot] ?? 1);
+      }
+      pendingLevels.set(socket.id, cleaned);
+    }
     leaveEndedGame(socket);
     pair(socket);
   });
@@ -114,6 +211,8 @@ io.on('connection', (socket) => {
       io.to(gameId).emit('drawOfferCleared');
     }
 
+    game.pieces = applyMoveToPieces(game.pieces, result);
+
     io.to(gameId).emit('moveMade', {
       from: result.from,
       to: result.to,
@@ -121,6 +220,7 @@ io.on('connection', (socket) => {
       san: result.san,
       fen: game.chess.fen(),
       turn: game.chess.turn(),
+      pieces: game.pieces,
     });
 
     if (game.chess.isGameOver()) {
@@ -223,6 +323,7 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     if (waitingSocketId === socket.id) waitingSocketId = null;
+    pendingLevels.delete(socket.id);
 
     const gameId = socketToGame.get(socket.id);
     if (!gameId) return;
