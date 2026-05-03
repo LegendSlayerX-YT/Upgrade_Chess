@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ChessRPG</title>
+<link rel="stylesheet"
+      href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <h1>ChessRPG</h1>
+  <div class="meta">Click <em>Find Game</em>. You'll be paired with the next waiting player.</div>
+
+  <div id="status">Idle.</div>
+  <div>
+    <button id="findBtn">Find Game</button>
+    <button id="drawBtn" disabled>Offer Draw</button>
+    <button id="resignBtn" disabled>Resign</button>
+  </div>
+  <div id="waiting" aria-live="polite">
+    <div id="waitingPiece">&#9823;</div>
+    <div id="waitingLabel">Searching for an opponent<span id="waitingDots"></span></div>
+  </div>
+
+  <div id="drawPrompt" style="display:none; margin-top:10px; padding:10px 12px; background:#fff7d6; border:1px solid #e6c84a; border-radius:6px;">
+    <span id="drawPromptText">Opponent offers a draw.</span>
+    <button id="drawAcceptBtn" style="margin-left:8px;">Accept</button>
+    <button id="drawDeclineBtn">Decline</button>
+  </div>
+
+  <div id="setup">
+    <h3>Customize Your Pieces</h3>
+    <div class="setup-hint">Set each piece's level (1–99). HP and damage scale with level. Only the side you're assigned will be used.</div>
+    <div class="setup-tabs">
+      <button class="setup-tab active" type="button" data-side="w">As White</button>
+      <button class="setup-tab" type="button" data-side="b">As Black</button>
+    </div>
+    <div id="setupGrid" class="setup-grid"></div>
+    <div class="setup-actions">
+      <button id="resetLevelsBtn" type="button">Reset side to 1</button>
+      <span class="meta">Levels are saved in this browser.</span>
+    </div>
+  </div>
+
+  <div id="board"></div>
+  <div id="pieceTooltip" role="tooltip"></div>
+
+  <div id="stats">
+    <h3>Your Pieces</h3>
+    <div id="statsList" class="stats-list"></div>
+  </div>
+
+  <div id="history"></div>
+
+  <div id="promoModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Choose promotion">
+    <div class="modal" style="padding:18px 22px; min-width:0;">
+      <h2 style="font-size:16px; margin-bottom:10px;">Promote to:</h2>
+      <div id="promoChoices" class="promo-choices"></div>
+    </div>
+  </div>
+
+  <div id="endModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <button class="modal-close" id="modalCloseBtn" aria-label="Close">&times;</button>
+      <h2 id="modalTitle">Game Over</h2>
+      <p class="modal-message" id="modalMessage"></p>
+      <div class="modal-buttons">
+        <button id="modalNewGameBtn">New Game</button>
+        <button id="modalRematchBtn">Rematch</button>
+      </div>
+      <p class="modal-sub" id="modalSub"></p>
+    </div>
+  </div>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
