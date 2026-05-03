@@ -1,6 +1,6 @@
 {
   "name": "chessrpg",
-  "version": "0.1.0",
+  "version": "pre-beta",
   "description": "Online chess with simple FIFO pairing",
   "main": "server.js",
   "scripts": {
