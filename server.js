@@ -105,11 +105,11 @@ function makeGameId() {
 function startGame(whiteSocket, blackSocket) {
   const gameId = makeGameId();
   const chess = new Chess();
-  const whiteLevels = pendingLevels.get(whiteSocket.id) || {};
-  const blackLevels = pendingLevels.get(blackSocket.id) || {};
+  const whiteSide = pendingLevels.get(whiteSocket.id)?.w || {};
+  const blackSide = pendingLevels.get(blackSocket.id)?.b || {};
   pendingLevels.delete(whiteSocket.id);
   pendingLevels.delete(blackSocket.id);
-  const pieces = buildPieces(whiteLevels, blackLevels);
+  const pieces = buildPieces(whiteSide, blackSide);
   games.set(gameId, {
     id: gameId,
     chess,
@@ -172,12 +172,21 @@ function leaveEndedGame(socket) {
 
 io.on('connection', (socket) => {
   socket.on('findGame', (payload) => {
-    if (payload && payload.levels && typeof payload.levels === 'object') {
-      const cleaned = {};
-      for (const slot of Object.keys(SLOT_TYPES)) {
-        cleaned[slot] = clampLevel(payload.levels[slot] ?? 1);
+    if (payload && payload.levelsByColor && typeof payload.levelsByColor === 'object') {
+      const cleaned = { w: {}, b: {} };
+      for (const side of ['w', 'b']) {
+        const src = payload.levelsByColor[side] || {};
+        for (const slot of Object.keys(SLOT_TYPES)) {
+          cleaned[side][slot] = clampLevel(src[slot] ?? 1);
+        }
       }
       pendingLevels.set(socket.id, cleaned);
+    } else if (payload && payload.levels && typeof payload.levels === 'object') {
+      const same = {};
+      for (const slot of Object.keys(SLOT_TYPES)) {
+        same[slot] = clampLevel(payload.levels[slot] ?? 1);
+      }
+      pendingLevels.set(socket.id, { w: { ...same }, b: { ...same } });
     }
     leaveEndedGame(socket);
     pair(socket);

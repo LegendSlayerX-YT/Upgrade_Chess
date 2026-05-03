@@ -163,6 +163,13 @@
   }
   .setup-actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
   .setup-actions button { margin: 0; }
+  .setup-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+  .setup-tab {
+    padding: 5px 12px; font-size: 13px;
+    border: 1px solid #c4c8d2; background: #fff; color: #444;
+    border-radius: 5px; cursor: pointer; margin: 0;
+  }
+  .setup-tab.active { background: #4a6cd4; color: #fff; border-color: #4a6cd4; }
 
   #stats {
     margin: 14px 0;
@@ -246,10 +253,14 @@
 
   <div id="setup">
     <h3>Customize Your Pieces</h3>
-    <div class="setup-hint">Set each piece's level (1–99). HP and damage scale with level.</div>
+    <div class="setup-hint">Set each piece's level (1–99). HP and damage scale with level. Only the side you're assigned will be used.</div>
+    <div class="setup-tabs">
+      <button class="setup-tab active" type="button" data-side="w">As White</button>
+      <button class="setup-tab" type="button" data-side="b">As Black</button>
+    </div>
     <div id="setupGrid" class="setup-grid"></div>
     <div class="setup-actions">
-      <button id="resetLevelsBtn" type="button">Reset to 1</button>
+      <button id="resetLevelsBtn" type="button">Reset side to 1</button>
       <span class="meta">Levels are saved in this browser.</span>
     </div>
   </div>
@@ -394,25 +405,26 @@
     k: { hp: 10, dmg: 10 },
   };
   const SLOT_DEFS = [
-    { slot: 'Ra', type: 'r', label: 'a1' },
-    { slot: 'Nb', type: 'n', label: 'b1' },
-    { slot: 'Bc', type: 'b', label: 'c1' },
-    { slot: 'Q',  type: 'q', label: 'd1' },
-    { slot: 'K',  type: 'k', label: 'e1' },
-    { slot: 'Bf', type: 'b', label: 'f1' },
-    { slot: 'Ng', type: 'n', label: 'g1' },
-    { slot: 'Rh', type: 'r', label: 'h1' },
-    { slot: 'Pa', type: 'p', label: 'a' },
-    { slot: 'Pb', type: 'p', label: 'b' },
-    { slot: 'Pc', type: 'p', label: 'c' },
-    { slot: 'Pd', type: 'p', label: 'd' },
-    { slot: 'Pe', type: 'p', label: 'e' },
-    { slot: 'Pf', type: 'p', label: 'f' },
-    { slot: 'Pg', type: 'p', label: 'g' },
-    { slot: 'Ph', type: 'p', label: 'h' },
+    { slot: 'Ra', type: 'r', file: 'a' },
+    { slot: 'Nb', type: 'n', file: 'b' },
+    { slot: 'Bc', type: 'b', file: 'c' },
+    { slot: 'Q',  type: 'q', file: 'd' },
+    { slot: 'K',  type: 'k', file: 'e' },
+    { slot: 'Bf', type: 'b', file: 'f' },
+    { slot: 'Ng', type: 'n', file: 'g' },
+    { slot: 'Rh', type: 'r', file: 'h' },
+    { slot: 'Pa', type: 'p', file: 'a' },
+    { slot: 'Pb', type: 'p', file: 'b' },
+    { slot: 'Pc', type: 'p', file: 'c' },
+    { slot: 'Pd', type: 'p', file: 'd' },
+    { slot: 'Pe', type: 'p', file: 'e' },
+    { slot: 'Pf', type: 'p', file: 'f' },
+    { slot: 'Pg', type: 'p', file: 'g' },
+    { slot: 'Ph', type: 'p', file: 'h' },
   ];
   const TYPE_NAME = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
-  const LEVEL_STORAGE_KEY = 'chessrpg.levels.v1';
+  const LEVEL_STORAGE_KEY_V1 = 'chessrpg.levels.v1';
+  const LEVEL_STORAGE_KEY = 'chessrpg.levels.v2';
 
   function clampLevel(n) {
     const v = Math.floor(Number(n));
@@ -421,27 +433,42 @@
     return v;
   }
 
+  function emptyLevels() {
+    const out = {};
+    for (const { slot } of SLOT_DEFS) out[slot] = 1;
+    return out;
+  }
+
   function loadLevels() {
     try {
       const raw = localStorage.getItem(LEVEL_STORAGE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      const out = {};
-      for (const { slot } of SLOT_DEFS) out[slot] = clampLevel(parsed?.[slot] ?? 1);
-      return out;
-    } catch (_) { return {}; }
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const out = { w: emptyLevels(), b: emptyLevels() };
+        for (const side of ['w', 'b']) {
+          for (const { slot } of SLOT_DEFS) {
+            out[side][slot] = clampLevel(parsed?.[side]?.[slot] ?? 1);
+          }
+        }
+        return out;
+      }
+      const legacy = localStorage.getItem(LEVEL_STORAGE_KEY_V1);
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        const same = {};
+        for (const { slot } of SLOT_DEFS) same[slot] = clampLevel(parsed?.[slot] ?? 1);
+        return { w: { ...same }, b: { ...same } };
+      }
+    } catch (_) {}
+    return { w: emptyLevels(), b: emptyLevels() };
   }
 
   function saveLevels(levels) {
     try { localStorage.setItem(LEVEL_STORAGE_KEY, JSON.stringify(levels)); } catch (_) {}
   }
 
-  let myLevels = (() => {
-    const stored = loadLevels();
-    const out = {};
-    for (const { slot } of SLOT_DEFS) out[slot] = stored[slot] ?? 1;
-    return out;
-  })();
+  let myLevels = loadLevels();
+  let activeSide = 'w';
 
   const SLOT_TO_W_SQUARE = {
     Ra:'a1', Nb:'b1', Bc:'c1', Q:'d1', K:'e1', Bf:'f1', Ng:'g1', Rh:'h1',
@@ -452,10 +479,11 @@
     for (const { slot, type } of SLOT_DEFS) {
       const wSq = SLOT_TO_W_SQUARE[slot];
       const bSq = wSq[0] + (wSq[1] === '1' ? '8' : '7');
-      const lvl = clampLevel(myLevels[slot] ?? 1);
+      const wLvl = clampLevel(myLevels.w[slot] ?? 1);
+      const bLvl = clampLevel(myLevels.b[slot] ?? 1);
       const base = PIECE_BASE[type];
-      pieces[wSq] = { id: 'w'+slot, type, color: 'w', level: lvl, hp: base.hp*lvl, dmg: base.dmg*lvl };
-      pieces[bSq] = { id: 'b'+slot, type, color: 'b', level: lvl, hp: base.hp*lvl, dmg: base.dmg*lvl };
+      pieces[wSq] = { id: 'w'+slot, type, color: 'w', level: wLvl, hp: base.hp*wLvl, dmg: base.dmg*wLvl };
+      pieces[bSq] = { id: 'b'+slot, type, color: 'b', level: bLvl, hp: base.hp*bLvl, dmg: base.dmg*bLvl };
     }
     return pieces;
   }
@@ -467,13 +495,25 @@
   const statsListEl = document.getElementById('statsList');
 
   function renderSetup() {
-    setupGrid.innerHTML = SLOT_DEFS.map(({ slot, type, label }) => `
-      <div class="setup-cell">
-        <img src="/img/chesspieces/wikipedia/w${TYPE_NAME[type]}.png" alt="${type}" />
-        <div class="slot-label">${label}</div>
-        <input type="number" min="1" max="99" data-slot="${slot}" value="${myLevels[slot] ?? 1}" />
-      </div>
-    `).join('');
+    const sideLevels = myLevels[activeSide];
+    const pawns = SLOT_DEFS.filter(s => s.type === 'p');
+    const back = SLOT_DEFS.filter(s => s.type !== 'p');
+    const ordered = activeSide === 'b'
+      ? [...pawns.slice().reverse(), ...back.slice().reverse()]
+      : [...pawns, ...back];
+    const rankFor = (type) => activeSide === 'w'
+      ? (type === 'p' ? '2' : '1')
+      : (type === 'p' ? '7' : '8');
+    setupGrid.innerHTML = ordered.map(({ slot, type, file }) => {
+      const label = file + rankFor(type);
+      return `
+        <div class="setup-cell">
+          <img src="/img/chesspieces/wikipedia/${activeSide}${TYPE_NAME[type]}.png" alt="${type}" />
+          <div class="slot-label">${label}</div>
+          <input type="number" min="1" max="99" data-slot="${slot}" value="${sideLevels[slot] ?? 1}" />
+        </div>
+      `;
+    }).join('');
   }
 
   setupGrid.addEventListener('input', (e) => {
@@ -481,7 +521,7 @@
     if (!(t instanceof HTMLInputElement)) return;
     const slot = t.dataset.slot;
     if (!slot) return;
-    myLevels[slot] = clampLevel(t.value);
+    myLevels[activeSide][slot] = clampLevel(t.value);
     saveLevels(myLevels);
     refreshPreviewPieces();
   });
@@ -491,10 +531,24 @@
     t.value = String(clampLevel(t.value));
   });
   resetLevelsBtn.addEventListener('click', () => {
-    for (const { slot } of SLOT_DEFS) myLevels[slot] = 1;
+    for (const { slot } of SLOT_DEFS) myLevels[activeSide][slot] = 1;
     saveLevels(myLevels);
     renderSetup();
     refreshPreviewPieces();
+  });
+  document.querySelectorAll('.setup-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const side = btn.dataset.side;
+      if (side !== 'w' && side !== 'b') return;
+      activeSide = side;
+      document.querySelectorAll('.setup-tab').forEach(b => {
+        b.classList.toggle('active', b.dataset.side === activeSide);
+      });
+      renderSetup();
+      if (!gameActive && board && typeof board.orientation === 'function') {
+        board.orientation(activeSide === 'b' ? 'black' : 'white');
+      }
+    });
   });
   renderSetup();
   refreshPreviewPieces();
@@ -506,15 +560,24 @@
   const TYPE_FULL = { p: 'Pawn', n: 'Knight', b: 'Bishop', r: 'Rook', q: 'Queen', k: 'King' };
 
   function squareFromElement(el) {
-    if (!el) return null;
-    const sq = el.closest('[data-square]');
-    if (sq && /^[a-h][1-8]$/.test(sq.getAttribute('data-square'))) {
-      return sq.getAttribute('data-square');
-    }
-    const cls = el.closest('[class]');
-    if (cls) {
-      const m = cls.className.match(/\bsquare-([a-h][1-8])\b/);
+    while (el && el.nodeType === 1) {
+      if (el.hasAttribute && el.hasAttribute('data-square')) {
+        const v = el.getAttribute('data-square');
+        if (/^[a-h][1-8]$/.test(v)) return v;
+      }
+      const cn = typeof el.className === 'string' ? el.className : '';
+      const m = cn.match(/\bsquare-([a-h][1-8])\b/);
       if (m) return m[1];
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function squareAtPoint(x, y) {
+    const els = document.elementsFromPoint(x, y);
+    for (const el of els) {
+      const sq = squareFromElement(el);
+      if (sq) return sq;
     }
     return null;
   }
@@ -545,8 +608,18 @@
 
   const boardEl = document.getElementById('board');
   let lastTooltipSquare = null;
-  boardEl.addEventListener('mousemove', (e) => {
-    const sq = squareFromElement(e.target);
+  function handleHover(e) {
+    const rect = boardEl.getBoundingClientRect();
+    const insideBoard =
+      e.clientX >= rect.left && e.clientX <= rect.right &&
+      e.clientY >= rect.top && e.clientY <= rect.bottom;
+    if (!insideBoard) {
+      lastTooltipSquare = null;
+      hideTooltip();
+      return;
+    }
+    let sq = squareFromElement(e.target);
+    if (!sq) sq = squareAtPoint(e.clientX, e.clientY);
     if (!sq || !currentPieces[sq]) {
       lastTooltipSquare = null;
       hideTooltip();
@@ -554,11 +627,9 @@
     }
     lastTooltipSquare = sq;
     showTooltipFor(sq, e.clientX, e.clientY);
-  });
-  boardEl.addEventListener('mouseleave', () => {
-    lastTooltipSquare = null;
-    hideTooltip();
-  });
+  }
+  document.addEventListener('mousemove', handleHover);
+  document.addEventListener('mouseover', handleHover);
 
   function renderStats() {
     if (!myColor) { statsListEl.innerHTML = ''; return; }
@@ -680,6 +751,9 @@
     showSetup(true);
     showStats(false);
     refreshPreviewPieces();
+    if (board && typeof board.orientation === 'function') {
+      board.orientation(activeSide === 'b' ? 'black' : 'white');
+    }
     let msg;
     switch (payload.type) {
       case 'checkmate': msg = `Checkmate. ${payload.winner} wins.`; break;
@@ -703,7 +777,7 @@
   findBtn.addEventListener('click', () => {
     setStatus('Looking for an opponent…');
     findBtn.disabled = true;
-    socket.emit('findGame', { levels: myLevels });
+    socket.emit('findGame', { levelsByColor: myLevels });
   });
 
   resignBtn.addEventListener('click', () => {
@@ -799,7 +873,7 @@
     setStatus('Looking for an opponent…');
     findBtn.disabled = true;
     showWaiting();
-    socket.emit('findGame', { levels: myLevels });
+    socket.emit('findGame', { levelsByColor: myLevels });
   });
 
   modalRematchBtn.addEventListener('click', () => {
