@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ChessRPG</title>
+<link rel="stylesheet"
+      href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
+<style>
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    max-width: 560px;
+    margin: 24px auto;
+    padding: 0 16px;
+    color: #222;
+  }
+  h1 { margin-bottom: 4px; }
+  #board { width: 480px; margin: 16px 0; }
+  #status {
+    padding: 10px 12px;
+    background: #f3f3f3;
+    border-radius: 6px;
+    margin: 12px 0;
+    min-height: 1.4em;
+  }
+  button {
+    padding: 8px 14px;
+    font-size: 14px;
+    border: 1px solid #888;
+    background: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #history {
+    font-family: ui-monospace, monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    background: #fafafa;
+    border: 1px solid #eee;
+    padding: 8px;
+    border-radius: 4px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .meta { color: #555; font-size: 13px; }
+
+  #waiting {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    margin: 12px 0;
+    background: linear-gradient(90deg, #f6f7fb, #eef1ff, #f6f7fb);
+    background-size: 200% 100%;
+    border: 1px solid #d8def0;
+    border-radius: 8px;
+    animation: waitingShimmer 2.4s linear infinite;
+  }
+  #waiting.on { display: flex; }
+  #waitingPiece {
+    font-size: 34px;
+    line-height: 1;
+    animation: waitingBounce 1.1s cubic-bezier(.5,0,.5,1) infinite;
+    transform-origin: 50% 100%;
+  }
+  #waitingLabel { font-size: 15px; color: #333; }
+  #waitingDots::after {
+    content: '';
+    display: inline-block;
+    width: 1.4em;
+    text-align: left;
+    animation: waitingDots 1.2s steps(4, end) infinite;
+  }
+  @keyframes waitingBounce {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    40%      { transform: translateY(-12px) scale(0.96, 1.04); }
+    70%      { transform: translateY(0) scale(1.06, 0.94); }
+  }
+  @keyframes waitingDots {
+    0%   { content: ''; }
+    25%  { content: '.'; }
+    50%  { content: '..'; }
+    75%  { content: '...'; }
+    100% { content: ''; }
+  }
+  @keyframes waitingShimmer {
+    0%   { background-position: 0% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.45);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.18s ease-out;
+  }
+  .modal-overlay.on { display: flex; }
+  .modal {
+    background: #fff;
+    border-radius: 10px;
+    padding: 28px 32px 24px;
+    min-width: 300px;
+    max-width: 90vw;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    position: relative;
+    text-align: center;
+    animation: popIn 0.22s ease-out;
+  }
+  .modal h2 { margin: 0 0 8px; font-size: 22px; }
+  .modal-message { color: #444; margin: 0 0 16px; }
+  .modal-sub { font-size: 13px; color: #666; margin: 12px 0 0; min-height: 1.2em; }
+  .modal-buttons { display: flex; gap: 10px; justify-content: center; }
+  .modal-close {
+    position: absolute; top: 6px; right: 8px;
+    background: transparent; border: none;
+    font-size: 24px; line-height: 1;
+    cursor: pointer; color: #888;
+    padding: 4px 10px; margin: 0;
+  }
+  .modal-close:hover { color: #222; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes popIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+
+  .promo-choices { display: flex; gap: 8px; }
+  .promo-btn {
+    width: 64px; height: 64px;
+    padding: 4px;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    background: #f3f3f3;
+    cursor: pointer;
+    margin: 0;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .promo-btn:hover { border-color: #4a90e2; background: #eaf3ff; }
+  .promo-btn img { width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+  <h1>ChessRPG</h1>
+  <div class="meta">Click <em>Find Game</em>. You'll be paired with the next waiting player.</div>
+
+  <div id="status">Idle.</div>
+  <div>
+    <button id="findBtn">Find Game</button>
+    <button id="drawBtn" disabled>Offer Draw</button>
+    <button id="resignBtn" disabled>Resign</button>
+  </div>
+  <div id="waiting" aria-live="polite">
+    <div id="waitingPiece">&#9823;</div>
+    <div id="waitingLabel">Searching for an opponent<span id="waitingDots"></span></div>
+  </div>
+
+  <div id="drawPrompt" style="display:none; margin-top:10px; padding:10px 12px; background:#fff7d6; border:1px solid #e6c84a; border-radius:6px;">
+    <span id="drawPromptText">Opponent offers a draw.</span>
+    <button id="drawAcceptBtn" style="margin-left:8px;">Accept</button>
+    <button id="drawDeclineBtn">Decline</button>
+  </div>
+
+  <div id="board"></div>
+  <div id="history"></div>
+
+  <div id="promoModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Choose promotion">
+    <div class="modal" style="padding:18px 22px; min-width:0;">
+      <h2 style="font-size:16px; margin-bottom:10px;">Promote to:</h2>
+      <div id="promoChoices" class="promo-choices"></div>
+    </div>
+  </div>
+
+  <div id="endModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <button class="modal-close" id="modalCloseBtn" aria-label="Close">&times;</button>
+      <h2 id="modalTitle">Game Over</h2>
+      <p class="modal-message" id="modalMessage"></p>
+      <div class="modal-buttons">
+        <button id="modalNewGameBtn">New Game</button>
+        <button id="modalRematchBtn">Rematch</button>
+      </div>
+      <p class="modal-sub" id="modalSub"></p>
+    </div>
+  </div>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script type="module">
+  import { Chess } from 'https://esm.sh/chess.js@1.0.0-beta.8';
+  const socket = io();
+
+  const statusEl = document.getElementById('status');
+  const historyEl = document.getElementById('history');
+  const findBtn = document.getElementById('findBtn');
+  const resignBtn = document.getElementById('resignBtn');
+  const drawBtn = document.getElementById('drawBtn');
+  const drawPrompt = document.getElementById('drawPrompt');
+  const drawPromptText = document.getElementById('drawPromptText');
+  const drawAcceptBtn = document.getElementById('drawAcceptBtn');
+  const drawDeclineBtn = document.getElementById('drawDeclineBtn');
+
+  const waitingEl = document.getElementById('waiting');
+  function showWaiting() { waitingEl.classList.add('on'); }
+  function hideWaiting() { waitingEl.classList.remove('on'); }
+
+  const endModal = document.getElementById('endModal');
+  const modalTitle = document.getElementById('modalTitle');
+  const modalMessage = document.getElementById('modalMessage');
+  const modalSub = document.getElementById('modalSub');
+  const modalCloseBtn = document.getElementById('modalCloseBtn');
+  const modalNewGameBtn = document.getElementById('modalNewGameBtn');
+  const modalRematchBtn = document.getElementById('modalRematchBtn');
+
+  let rematchRequestedByMe = false;
+
+  function showEndModal(message) {
+    modalMessage.textContent = message;
+    modalSub.textContent = '';
+    modalRematchBtn.disabled = false;
+    modalRematchBtn.textContent = 'Rematch';
+    rematchRequestedByMe = false;
+    endModal.classList.add('on');
+  }
+  function hideEndModal() { endModal.classList.remove('on'); }
+
+  const promoModal = document.getElementById('promoModal');
+  const promoChoices = document.getElementById('promoChoices');
+  let pendingPromotion = null;
+
+  function showPromotionPicker(from, to, color) {
+    pendingPromotion = { from, to };
+    const c = color === 'w' ? 'w' : 'b';
+    const pieces = [['q','Queen'], ['r','Rook'], ['b','Bishop'], ['n','Knight']];
+    promoChoices.innerHTML = pieces.map(([p, label]) => `
+      <button class="promo-btn" data-piece="${p}" aria-label="${label}" title="${label}">
+        <img src="/img/chesspieces/wikipedia/${c}${p.toUpperCase()}.png" alt="${label}" />
+      </button>
+    `).join('');
+    promoModal.classList.add('on');
+  }
+
+  function hidePromotionPicker() {
+    pendingPromotion = null;
+    promoModal.classList.remove('on');
+  }
+
+  promoChoices.addEventListener('click', (e) => {
+    const btn = e.target.closest('.promo-btn');
+    if (!btn || !pendingPromotion) return;
+    const piece = btn.dataset.piece;
+    const { from, to } = pendingPromotion;
+    let move;
+    try {
+      move = chess.move({ from, to, promotion: piece });
+    } catch (_) {
+      move = null;
+    }
+    hidePromotionPicker();
+    if (!move) {
+      if (board) board.position(chess.fen());
+      return;
+    }
+    socket.emit('move', { from, to, promotion: piece });
+    if (board) board.position(chess.fen());
+    renderHistory();
+    updateStatus();
+  });
+
+  function hideDrawPrompt() { drawPrompt.style.display = 'none'; }
+  function showDrawPrompt(text, withButtons) {
+    drawPromptText.textContent = text;
+    drawAcceptBtn.style.display = withButtons ? '' : 'none';
+    drawDeclineBtn.style.display = withButtons ? '' : 'none';
+    drawPrompt.style.display = '';
+  }
+
+  let chess = new Chess();
+  let board = null;
+  let myColor = null;
+  let gameActive = false;
+
+  function setStatus(msg) { statusEl.textContent = msg; }
+
+  function renderHistory() {
+    const moves = chess.history();
+    let out = '';
+    for (let i = 0; i < moves.length; i += 2) {
+      const num = (i / 2) + 1;
+      out += `${num}. ${moves[i]}${moves[i + 1] ? ' ' + moves[i + 1] : ''}\n`;
+    }
+    historyEl.textContent = out;
+  }
+
+  function updateStatus() {
+    if (!gameActive) return;
+    const turn = chess.turn() === 'w' ? 'White' : 'Black';
+    const me = myColor === 'w' ? 'White' : 'Black';
+    let s = `You are ${me}. ${turn} to move.`;
+    if (chess.inCheck()) s += ' Check!';
+    setStatus(s);
+  }
+
+  function onDragStart(_source, piece) {
+    if (!gameActive) return false;
+    if (chess.isGameOver()) return false;
+    if ((myColor === 'w' && piece.startsWith('b')) ||
+        (myColor === 'b' && piece.startsWith('w'))) return false;
+    if (chess.turn() !== myColor) return false;
+  }
+
+  function isPromotionMove(source, target) {
+    const piece = chess.get(source);
+    if (!piece || piece.type !== 'p') return false;
+    if (piece.color === 'w' && target[1] !== '8') return false;
+    if (piece.color === 'b' && target[1] !== '1') return false;
+    return chess.moves({ square: source, verbose: true })
+      .some(m => m.to === target && m.promotion);
+  }
+
+  function onDrop(source, target) {
+    if (isPromotionMove(source, target)) {
+      const color = chess.get(source).color;
+      showPromotionPicker(source, target, color);
+      return;
+    }
+
+    let move;
+    try {
+      move = chess.move({ from: source, to: target, promotion: 'q' });
+    } catch (_) {
+      move = null;
+    }
+    if (!move) return 'snapback';
+
+    socket.emit('move', { from: source, to: target });
+    renderHistory();
+    updateStatus();
+  }
+
+  function onSnapEnd() {
+    board.position(chess.fen());
+  }
+
+  function startBoard(fen, color) {
+    myColor = color === 'white' ? 'w' : 'b';
+    chess = new Chess(fen);
+    if (board) board.destroy();
+    board = Chessboard('board', {
+      draggable: true,
+      position: fen,
+      orientation: color,
+      pieceTheme: '/img/chesspieces/wikipedia/{piece}.png',
+      onDragStart,
+      onDrop,
+      onSnapEnd,
+    });
+    gameActive = true;
+    findBtn.disabled = true;
+    resignBtn.disabled = false;
+    drawBtn.disabled = false;
+    drawBtn.textContent = 'Offer Draw';
+    hideDrawPrompt();
+    renderHistory();
+    updateStatus();
+  }
+
+  function endGame(payload) {
+    gameActive = false;
+    findBtn.disabled = false;
+    resignBtn.disabled = true;
+    drawBtn.disabled = true;
+    drawBtn.textContent = 'Offer Draw';
+    hideDrawPrompt();
+    hideWaiting();
+    hidePromotionPicker();
+    let msg;
+    switch (payload.type) {
+      case 'checkmate': msg = `Checkmate. ${payload.winner} wins.`; break;
+      case 'resign':    msg = `${payload.winner} wins by resignation.`; break;
+      case 'disconnect': msg = `Opponent disconnected. ${payload.winner} wins.`; break;
+      case 'agreement': msg = 'Draw by agreement.'; break;
+      case 'stalemate': msg = 'Draw by stalemate.'; break;
+      case 'threefold': msg = 'Draw by threefold repetition.'; break;
+      case 'insufficient': msg = 'Draw by insufficient material.'; break;
+      case 'draw': msg = 'Draw.'; break;
+      default: msg = 'Game over.';
+    }
+    setStatus(msg);
+    showEndModal(msg);
+    if (payload.type === 'disconnect') {
+      modalRematchBtn.disabled = true;
+      modalSub.textContent = 'Opponent left — rematch unavailable.';
+    }
+  }
+
+  findBtn.addEventListener('click', () => {
+    setStatus('Looking for an opponent…');
+    findBtn.disabled = true;
+    socket.emit('findGame');
+  });
+
+  resignBtn.addEventListener('click', () => {
+    if (!gameActive) return;
+    if (!confirm('Resign this game?')) return;
+    socket.emit('resign');
+  });
+
+  drawBtn.addEventListener('click', () => {
+    if (!gameActive) return;
+    socket.emit('offerDraw');
+  });
+
+  drawAcceptBtn.addEventListener('click', () => {
+    socket.emit('acceptDraw');
+    hideDrawPrompt();
+  });
+
+  drawDeclineBtn.addEventListener('click', () => {
+    socket.emit('declineDraw');
+    hideDrawPrompt();
+  });
+
+  socket.on('waiting', () => {
+    setStatus('Waiting for an opponent to join…');
+    showWaiting();
+  });
+
+  socket.on('paired', ({ gameId, color, fen }) => {
+    hideWaiting();
+    hideEndModal();
+    setStatus(`Paired! Game ${gameId}. You are ${color}.`);
+    startBoard(fen, color);
+  });
+
+  socket.on('moveMade', ({ from, to, promotion, fen }) => {
+    // If the move was ours, chess.js already has it. Otherwise apply opponent's move.
+    if (chess.fen() !== fen) {
+      try {
+        chess.move({ from, to, promotion: promotion || 'q' });
+      } catch (_) {
+        chess.load(fen);
+      }
+    }
+    if (board) board.position(chess.fen());
+    renderHistory();
+    updateStatus();
+  });
+
+  socket.on('illegalMove', ({ reason }) => {
+    // Server rejected our move — re-sync from server-authoritative FEN if needed.
+    setStatus(`Move rejected: ${reason}`);
+  });
+
+  socket.on('drawOfferSent', () => {
+    drawBtn.disabled = true;
+    drawBtn.textContent = 'Draw offered';
+  });
+
+  socket.on('drawOffered', () => {
+    showDrawPrompt('Opponent offers a draw.', true);
+  });
+
+  socket.on('drawDeclined', () => {
+    drawBtn.disabled = false;
+    drawBtn.textContent = 'Offer Draw';
+    showDrawPrompt('Draw offer declined.', false);
+    setTimeout(hideDrawPrompt, 2500);
+  });
+
+  socket.on('drawOfferCleared', () => {
+    drawBtn.disabled = false;
+    drawBtn.textContent = 'Offer Draw';
+    hideDrawPrompt();
+  });
+
+  socket.on('gameOver', endGame);
+
+  modalCloseBtn.addEventListener('click', () => {
+    hideEndModal();
+    if (rematchRequestedByMe) {
+      socket.emit('cancelRematch');
+      rematchRequestedByMe = false;
+    }
+  });
+
+  modalNewGameBtn.addEventListener('click', () => {
+    hideEndModal();
+    rematchRequestedByMe = false;
+    setStatus('Looking for an opponent…');
+    findBtn.disabled = true;
+    showWaiting();
+    socket.emit('findGame');
+  });
+
+  modalRematchBtn.addEventListener('click', () => {
+    if (modalRematchBtn.disabled) return;
+    rematchRequestedByMe = true;
+    modalRematchBtn.disabled = true;
+    modalRematchBtn.textContent = 'Rematch requested';
+    modalSub.textContent = 'Waiting for opponent…';
+    socket.emit('requestRematch');
+  });
+
+  socket.on('rematchRequested', () => {
+    if (!endModal.classList.contains('on')) return;
+    modalSub.textContent = 'Opponent wants a rematch.';
+    modalRematchBtn.textContent = 'Accept Rematch';
+  });
+
+  socket.on('rematchPending', () => {
+    modalSub.textContent = 'Waiting for opponent…';
+  });
+
+  socket.on('rematchUnavailable', () => {
+    if (!endModal.classList.contains('on')) return;
+    modalRematchBtn.disabled = true;
+    modalRematchBtn.textContent = 'Rematch';
+    modalSub.textContent = 'Opponent left — rematch unavailable.';
+    rematchRequestedByMe = false;
+  });
+
+  socket.on('disconnect', () => {
+    setStatus('Disconnected from server.');
+    gameActive = false;
+    findBtn.disabled = false;
+    resignBtn.disabled = true;
+    drawBtn.disabled = true;
+    hideWaiting();
+  });
+
+  // Render a non-interactive starting position immediately so the user sees
+  // the board on load, before any pairing happens.
+  board = Chessboard('board', {
+    draggable: false,
+    position: 'start',
+    pieceTheme: '/img/chesspieces/wikipedia/{piece}.png',
+  });
+</script>
+</body>
+</html>
