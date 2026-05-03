@@ -1,6 +1,50 @@
 import { Chess } from 'https://esm.sh/chess.js@1.0.0-beta.8';
 const socket = io();
 
+let isAuthenticated = false;
+let myName = null;
+
+window.handleCredentialResponse = (response) => {
+  if (!response || !response.credential) return;
+  socket.emit('authenticate', { credential: response.credential });
+};
+
+const userBadge = document.getElementById('userBadge');
+const userNameEl = document.getElementById('userName');
+const signInDiv = document.querySelector('.g_id_signin');
+const playerTopEl = document.getElementById('playerTop');
+const playerBottomEl = document.getElementById('playerBottom');
+const playerTopAvatar = document.getElementById('playerTopAvatar');
+const playerBottomAvatar = document.getElementById('playerBottomAvatar');
+const playerTopName = document.getElementById('playerTopName');
+const playerBottomName = document.getElementById('playerBottomName');
+const playerTopColor = document.getElementById('playerTopColor');
+const playerBottomColor = document.getElementById('playerBottomColor');
+
+const FALLBACK_AVATAR =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="%23d6dae5"/><circle cx="22" cy="17" r="7" fill="%238a93a6"/><path d="M6 40c2-8 10-12 16-12s14 4 16 12z" fill="%238a93a6"/></svg>'
+  );
+
+function setPlayerCard(side, name, picture, colorLabel) {
+  const isTop = side === 'top';
+  const avatar = isTop ? playerTopAvatar : playerBottomAvatar;
+  const nameEl = isTop ? playerTopName : playerBottomName;
+  const colorEl = isTop ? playerTopColor : playerBottomColor;
+  const card = isTop ? playerTopEl : playerBottomEl;
+  avatar.src = picture || FALLBACK_AVATAR;
+  avatar.onerror = () => { avatar.onerror = null; avatar.src = FALLBACK_AVATAR; };
+  nameEl.textContent = name;
+  colorEl.textContent = colorLabel;
+  card.style.visibility = 'visible';
+}
+
+function hidePlayerCards() {
+  playerTopEl.style.visibility = 'hidden';
+  playerBottomEl.style.visibility = 'hidden';
+}
+
 const statusEl = document.getElementById('status');
 const historyEl = document.getElementById('history');
 const findBtn = document.getElementById('findBtn');
@@ -440,7 +484,8 @@ function startBoard(fen, color) {
 
 function endGame(payload) {
   gameActive = false;
-  findBtn.disabled = false;
+  findBtn.disabled = !isAuthenticated;
+  hidePlayerCards();
   resignBtn.disabled = true;
   drawBtn.disabled = true;
   drawBtn.textContent = 'Offer Draw';
@@ -474,9 +519,29 @@ function endGame(payload) {
 }
 
 findBtn.addEventListener('click', () => {
+  if (!isAuthenticated) {
+    setStatus('Please sign in with Google first.');
+    return;
+  }
   setStatus('Looking for an opponent…');
   findBtn.disabled = true;
   socket.emit('findGame', { levelsByColor: myLevels });
+});
+
+socket.on('authenticated', ({ name }) => {
+  isAuthenticated = true;
+  myName = name;
+  userNameEl.textContent = name;
+  userBadge.style.display = '';
+  if (signInDiv) signInDiv.style.display = 'none';
+  if (!gameActive) findBtn.disabled = false;
+  setStatus(`Signed in as ${name}. Click Find Game.`);
+});
+
+socket.on('authError', ({ reason }) => {
+  setStatus(`Sign-in failed: ${reason}`);
+  isAuthenticated = false;
+  findBtn.disabled = true;
 });
 
 resignBtn.addEventListener('click', () => {
@@ -505,10 +570,16 @@ socket.on('waiting', () => {
   showWaiting();
 });
 
-socket.on('paired', ({ gameId, color, fen, pieces }) => {
+socket.on('paired', ({ gameId, color, fen, pieces, you, opponent, yourPicture, opponentPicture }) => {
   hideWaiting();
   hideEndModal();
-  setStatus(`Paired! Game ${gameId}. You are ${color}.`);
+  const youLabel = you || myName || 'You';
+  const oppLabel = opponent || 'Opponent';
+  setStatus(`Paired! Game ${gameId}. You are ${color}. Playing against ${oppLabel}.`);
+  const youColor = color === 'white' ? 'White' : 'Black';
+  const oppColor = color === 'white' ? 'Black' : 'White';
+  setPlayerCard('top', oppLabel, opponentPicture, oppColor);
+  setPlayerCard('bottom', youLabel, yourPicture, youColor);
   currentPieces = pieces || {};
   startBoard(fen, color);
 });
@@ -603,9 +674,11 @@ socket.on('rematchUnavailable', () => {
 socket.on('disconnect', () => {
   setStatus('Disconnected from server.');
   gameActive = false;
-  findBtn.disabled = false;
+  isAuthenticated = false;
+  findBtn.disabled = true;
   resignBtn.disabled = true;
   drawBtn.disabled = true;
+  hidePlayerCards();
   hideWaiting();
 });
 

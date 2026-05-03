@@ -3,17 +3,25 @@ import secrets
 import threading
 
 import chess
+from dotenv import load_dotenv
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 
+
+load_dotenv()
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+_google_request = google_requests.Request()
 
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", google_client_id=GOOGLE_CLIENT_ID)
 
 
 PIECE_BASE = {
@@ -48,7 +56,18 @@ games = {}
 sid_to_game = {}
 pending_levels = {}
 connected_sids = set()
+sid_to_user = {}
 state_lock = threading.RLock()
+
+
+def display_name_for(sid):
+    user = sid_to_user.get(sid)
+    return user["name"] if user else "Guest"
+
+
+def picture_for(sid):
+    user = sid_to_user.get(sid)
+    return (user or {}).get("picture")
 
 
 def clamp_level(n):
@@ -151,14 +170,27 @@ def start_game(white_sid, black_sid):
     sid_to_game[black_sid] = game_id
     socketio.server.enter_room(white_sid, game_id, namespace="/")
     socketio.server.enter_room(black_sid, game_id, namespace="/")
+    white_name = display_name_for(white_sid)
+    black_name = display_name_for(black_sid)
+    white_pic = picture_for(white_sid)
+    black_pic = picture_for(black_sid)
+    games[game_id]["names"] = {"white": white_name, "black": black_name}
     socketio.emit(
         "paired",
-        {"gameId": game_id, "color": "white", "fen": board.fen(), "pieces": pieces},
+        {
+            "gameId": game_id, "color": "white", "fen": board.fen(), "pieces": pieces,
+            "you": white_name, "opponent": black_name,
+            "yourPicture": white_pic, "opponentPicture": black_pic,
+        },
         to=white_sid,
     )
     socketio.emit(
         "paired",
-        {"gameId": game_id, "color": "black", "fen": board.fen(), "pieces": pieces},
+        {
+            "gameId": game_id, "color": "black", "fen": board.fen(), "pieces": pieces,
+            "you": black_name, "opponent": white_name,
+            "yourPicture": black_pic, "opponentPicture": white_pic,
+        },
         to=black_sid,
     )
 
@@ -211,11 +243,40 @@ def on_connect():
     connected_sids.add(request.sid)
 
 
+@socketio.on("authenticate")
+def on_authenticate(payload):
+    from flask import request
+    sid = request.sid
+    credential = (payload or {}).get("credential") if isinstance(payload, dict) else None
+    if not credential:
+        emit("authError", {"reason": "missing credential"})
+        return
+    try:
+        info = id_token.verify_oauth2_token(
+            credential, _google_request, GOOGLE_CLIENT_ID
+        )
+    except ValueError as e:
+        emit("authError", {"reason": f"invalid token: {e}"})
+        return
+    name = info.get("name") or info.get("email") or "Player"
+    with state_lock:
+        sid_to_user[sid] = {
+            "sub": info.get("sub"),
+            "name": name,
+            "email": info.get("email"),
+            "picture": info.get("picture"),
+        }
+    emit("authenticated", {"name": name})
+
+
 @socketio.on("findGame")
 def on_find_game(payload):
     from flask import request
     sid = request.sid
     with state_lock:
+        if sid not in sid_to_user:
+            emit("authError", {"reason": "login required"})
+            return
         if isinstance(payload, dict):
             levels_by_color = payload.get("levelsByColor")
             legacy_levels = payload.get("levels")
@@ -444,6 +505,7 @@ def on_disconnect():
         if waiting_sid == sid:
             waiting_sid = None
         pending_levels.pop(sid, None)
+        sid_to_user.pop(sid, None)
 
         game_id = sid_to_game.get(sid)
         if not game_id:
@@ -465,6 +527,6 @@ def on_disconnect():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "3000"))
+    port = int(os.environ.get("PORT"))
     print(f"ChessRPG server listening on http://localhost:{port}")
     socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
