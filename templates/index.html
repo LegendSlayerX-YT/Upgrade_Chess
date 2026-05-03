@@ -6,14 +6,32 @@
 <link rel="stylesheet"
       href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
 <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<meta name="google-client-id" content="{{ google_client_id }}" />
 </head>
 <body>
   <h1>ChessRPG</h1>
-  <div class="meta">Click <em>Find Game</em>. You'll be paired with the next waiting player.</div>
+  <div class="meta">
+    Login using Google in order to play.
+    <br>
+    Then, click <em>Find Game</em>. You'll be paired with the next waiting player.
+  </div>
+
+  <div id="auth">
+    <div id="g_id_onload"
+         data-client_id="{{ google_client_id }}"
+         data-callback="handleCredentialResponse"
+         data-auto_prompt="false"></div>
+    <div class="g_id_signin" data-type="standard"></div>
+    <div id="userBadge" style="display:none;">
+      Signed in as <strong id="userName"></strong>
+    </div>
+  </div>
+
 
   <div id="status">Idle.</div>
   <div>
-    <button id="findBtn">Find Game</button>
+    <button id="findBtn" disabled>Find Game</button>
     <button id="drawBtn" disabled>Offer Draw</button>
     <button id="resignBtn" disabled>Resign</button>
   </div>
@@ -42,7 +60,23 @@
     </div>
   </div>
 
-  <div id="board"></div>
+  <div id="boardRow">
+    <div class="player-card" id="playerTop" style="visibility:hidden;">
+      <img class="player-avatar" id="playerTopAvatar" alt="" />
+      <div class="player-meta">
+        <div class="player-name" id="playerTopName"></div>
+        <div class="player-color" id="playerTopColor"></div>
+      </div>
+    </div>
+    <div id="board"></div>
+    <div class="player-card" id="playerBottom" style="visibility:hidden;">
+      <img class="player-avatar" id="playerBottomAvatar" alt="" />
+      <div class="player-meta">
+        <div class="player-name" id="playerBottomName"></div>
+        <div class="player-color" id="playerBottomColor"></div>
+      </div>
+    </div>
+  </div>
   <div id="pieceTooltip" role="tooltip"></div>
 
   <div id="stats">

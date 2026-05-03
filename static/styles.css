@@ -6,7 +6,47 @@ body {
   color: #222;
 }
 h1 { margin-bottom: 4px; }
-#board { width: 480px; margin: 16px 0; }
+#board { width: 480px; margin: 0; }
+
+#boardRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 16px 0;
+}
+.player-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #f7f8fb;
+  border: 1px solid #e3e6ee;
+  border-radius: 10px;
+  width: 480px;
+  box-sizing: border-box;
+}
+.player-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #d6dae5;
+  flex: 0 0 auto;
+}
+.player-meta { min-width: 0; }
+.player-name {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.player-color {
+  font-size: 12px;
+  color: #666;
+  margin-top: 2px;
+}
 #status {
   padding: 10px 12px;
   background: #f3f3f3;
