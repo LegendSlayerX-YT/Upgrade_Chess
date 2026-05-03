@@ -9,7 +9,6 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 
-
 load_dotenv()
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
@@ -18,11 +17,9 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 _google_request = google_requests.Request()
 
-
 @app.route("/")
 def index():
     return render_template("index.html", google_client_id=GOOGLE_CLIENT_ID)
-
 
 PIECE_BASE = {
     "p": {"hp": 10, "dmg": 10},
@@ -50,7 +47,6 @@ PROMO_LETTER_TO_PIECE = {
     "q": chess.QUEEN, "r": chess.ROOK, "b": chess.BISHOP, "n": chess.KNIGHT,
 }
 
-
 waiting_sid = None
 games = {}
 sid_to_game = {}
@@ -59,16 +55,13 @@ connected_sids = set()
 sid_to_user = {}
 state_lock = threading.RLock()
 
-
 def display_name_for(sid):
     user = sid_to_user.get(sid)
     return user["name"] if user else "Guest"
 
-
 def picture_for(sid):
     user = sid_to_user.get(sid)
     return (user or {}).get("picture")
-
 
 def clamp_level(n):
     try:
@@ -81,11 +74,9 @@ def clamp_level(n):
         return 99
     return v
 
-
 def piece_stats(piece_type, level):
     base = PIECE_BASE[piece_type]
     return {"hp": base["hp"] * level, "dmg": base["dmg"] * level}
-
 
 def build_pieces(white_levels, black_levels):
     pieces = {}
@@ -107,7 +98,6 @@ def build_pieces(white_levels, black_levels):
             "level": b_level, "hp": b_stats["hp"], "dmg": b_stats["dmg"],
         }
     return pieces
-
 
 def apply_move_to_pieces(pieces, move_info):
     nxt = dict(pieces)
@@ -143,10 +133,8 @@ def apply_move_to_pieces(pieces, move_info):
         nxt[move_info["to"]] = mover
     return nxt
 
-
 def make_game_id():
     return secrets.token_hex(4)
-
 
 def start_game(white_sid, black_sid):
     game_id = make_game_id()
@@ -194,7 +182,6 @@ def start_game(white_sid, black_sid):
         to=black_sid,
     )
 
-
 def pair(sid):
     global waiting_sid
     if waiting_sid == sid:
@@ -211,7 +198,6 @@ def pair(sid):
         waiting_sid = sid
         socketio.emit("waiting", to=sid)
 
-
 def end_game(game_id, payload):
     game = games.get(game_id)
     if not game or game["state"] != "active":
@@ -219,7 +205,6 @@ def end_game(game_id, payload):
     game["state"] = "ended"
     game["rematch_requests"] = set()
     socketio.emit("gameOver", payload, to=game_id)
-
 
 def leave_ended_game(sid):
     game_id = sid_to_game.get(sid)
@@ -236,12 +221,10 @@ def leave_ended_game(sid):
     else:
         games.pop(game_id, None)
 
-
 @socketio.on("connect")
 def on_connect():
     from flask import request
     connected_sids.add(request.sid)
-
 
 @socketio.on("authenticate")
 def on_authenticate(payload):
@@ -268,7 +251,6 @@ def on_authenticate(payload):
         }
     emit("authenticated", {"name": name})
 
-
 @socketio.on("findGame")
 def on_find_game(payload):
     from flask import request
@@ -292,7 +274,6 @@ def on_find_game(payload):
                 pending_levels[sid] = {"w": dict(same), "b": dict(same)}
         leave_ended_game(sid)
         pair(sid)
-
 
 @socketio.on("move")
 def on_move(payload):
@@ -385,7 +366,6 @@ def on_move(payload):
                 outcome = {"type": "over"}
             end_game(game_id, outcome)
 
-
 @socketio.on("offerDraw")
 def on_offer_draw():
     from flask import request
@@ -407,7 +387,6 @@ def on_offer_draw():
         socketio.emit("drawOffered", {"by": color}, to=opponent_sid)
         emit("drawOfferSent")
 
-
 @socketio.on("acceptDraw")
 def on_accept_draw():
     from flask import request
@@ -422,7 +401,6 @@ def on_accept_draw():
             return
         game["draw_offer_by"] = None
         end_game(game_id, {"type": "agreement"})
-
 
 @socketio.on("declineDraw")
 def on_decline_draw():
@@ -439,7 +417,6 @@ def on_decline_draw():
         game["draw_offer_by"] = None
         socketio.emit("drawDeclined", to=game_id)
 
-
 @socketio.on("resign")
 def on_resign():
     from flask import request
@@ -452,7 +429,6 @@ def on_resign():
         loser = "white" if sid == game["white"] else "black"
         winner = "black" if loser == "white" else "white"
         end_game(game_id, {"type": "resign", "winner": winner})
-
 
 @socketio.on("requestRematch")
 def on_request_rematch():
@@ -487,13 +463,11 @@ def on_request_rematch():
             emit("rematchPending")
             socketio.emit("rematchRequested", to=opponent_sid)
 
-
 @socketio.on("cancelRematch")
 def on_cancel_rematch():
     from flask import request
     with state_lock:
         leave_ended_game(request.sid)
-
 
 @socketio.on("disconnect")
 def on_disconnect():
@@ -524,7 +498,6 @@ def on_disconnect():
             socketio.emit("rematchUnavailable", to=opponent_sid)
         else:
             games.pop(game_id, None)
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT"))
