@@ -1,4 +1,4 @@
-# ChessRPG
+# Upgrade Chess
 Chess but you can level up your pieces and they have epic battles
 <br>
 Forget your openings, go ahead and play G3 or some other random move
