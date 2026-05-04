@@ -159,7 +159,7 @@ const PIECE_BASE = {
   q: { hp: 10, dmg: 10 },
   k: { hp: 10, dmg: 10 },
 };
-const PIECE_LEVEL_MULT = { p: 1, n: 3, b: 3, r: 4, q: 7, k: 1 };
+const PIECE_LEVEL_MULT = { p: 1, n: 2, b: 2, r: 3, q: 4, k: 1 };
 const HP_TO_DMG_INC_RATIO = 1.5;
 function pieceStats(type, level) {
   const base = PIECE_BASE[type];
