@@ -157,7 +157,7 @@ const PIECE_BASE = {
   b: { hp: 10, dmg: 10 },
   r: { hp: 10, dmg: 10 },
   q: { hp: 10, dmg: 10 },
-  k: { hp: 10, dmg: 10 },
+  k: { hp: 10, dmg: 1000000 },
 };
 const PIECE_LEVEL_MULT = { p: 1, n: 2, b: 2, r: 3, q: 4, k: 1 };
 const HP_TO_DMG_INC_RATIO = 1.5;
