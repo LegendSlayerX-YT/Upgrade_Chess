@@ -460,19 +460,19 @@ function hideRealPieceAt(square) {
   return restore;
 }
 
-let pendingFightResolve = null;
+let currentDuel = null;
 let awaitingCapture = false;
 
 function playCaptureAnimation({
   capturedSquare, attackerSquare, isEnPassant,
   attackerType, attackerColor, defenderType, defenderColor,
-  mode, onStrike,
+  attackerHp, defenderHp, initialTurn, localRole, onStrike,
 }) {
   const sqEl = getSquareEl(capturedSquare);
-  if (!sqEl) return;
+  if (!sqEl) return null;
   const rect = sqEl.getBoundingClientRect();
   const size = rect.width;
-  if (!size) return;
+  if (!size) return null;
 
   const overlay = document.createElement('div');
   overlay.className = 'fight-overlay' + (isEnPassant ? ' fight-overlay--solo' : '');
@@ -486,6 +486,7 @@ function playCaptureAnimation({
   overlay.appendChild(flash);
 
   let atk = null;
+  let atkHpEl = null;
   if (!isEnPassant && attackerType && attackerColor) {
     atk = document.createElement('img');
     atk.src = PIECE_IMG(attackerColor, attackerType);
@@ -493,6 +494,11 @@ function playCaptureAnimation({
     atk.draggable = false;
     atk.className = 'fight-attacker';
     overlay.appendChild(atk);
+
+    atkHpEl = document.createElement('div');
+    atkHpEl.className = 'fight-hp fight-hp--attacker';
+    atkHpEl.textContent = attackerHp;
+    overlay.appendChild(atkHpEl);
   }
 
   const def = document.createElement('img');
@@ -510,21 +516,53 @@ function playCaptureAnimation({
   def.style.setProperty('--fly-rot', rot + 'deg');
 
   overlay.appendChild(def);
+
+  const defHpEl = document.createElement('div');
+  defHpEl.className = 'fight-hp fight-hp--defender';
+  defHpEl.textContent = defenderHp;
+  overlay.appendChild(defHpEl);
+
+  const btn = document.createElement('button');
+  btn.className = 'fight-resolve-btn';
+  btn.type = 'button';
+  btn.textContent = 'Strike!';
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    if (onStrike) onStrike();
+  });
+  overlay.appendChild(btn);
+
+  const waitingLabel = document.createElement('div');
+  waitingLabel.className = 'fight-waiting';
+  waitingLabel.textContent = 'Waiting…';
+  overlay.appendChild(waitingLabel);
+
   document.body.appendChild(overlay);
 
-  // Hide the real chessboard.js attacker piece while we show the shrunk overlay
-  // pair on the same square. (Skip for en passant — different squares.)
   let restoreReal = null;
   if (!isEnPassant && attackerSquare) {
     restoreReal = hideRealPieceAt(attackerSquare);
   }
 
+  const update = ({ attackerHp: aHp, defenderHp: dHp, turn }) => {
+    if (atkHpEl && aHp != null) atkHpEl.textContent = aHp;
+    if (dHp != null) defHpEl.textContent = dHp;
+    const myTurn = turn === localRole;
+    btn.style.display = myTurn ? '' : 'none';
+    btn.disabled = !myTurn;
+    waitingLabel.style.display = myTurn ? 'none' : '';
+  };
+  update({ attackerHp, defenderHp, turn: initialTurn });
+
   let resolved = false;
   const resolve = (loser = 'defender') => {
     if (resolved) return;
     resolved = true;
+    btn.remove();
+    waitingLabel.remove();
     if (loser === 'attacker') {
       def.style.visibility = 'hidden';
+      if (defHpEl) defHpEl.style.visibility = 'hidden';
       if (atk) {
         const sign2 = Math.random() < 0.5 ? -1 : 1;
         const dx2 = sign2 * (size * 4 + Math.random() * size * 3);
@@ -535,31 +573,18 @@ function playCaptureAnimation({
         atk.style.setProperty('--fly-rot', rot2 + 'deg');
         atk.classList.add('fight-fly');
       }
+      if (atkHpEl) atkHpEl.remove();
     } else {
       if (atk) atk.remove();
+      if (atkHpEl) atkHpEl.remove();
       if (restoreReal) restoreReal();
       def.classList.add('fight-fly');
+      if (defHpEl) defHpEl.remove();
     }
     setTimeout(() => overlay.remove(), FIGHT_FLY_MS + 80);
   };
 
-  if (mode === 'manual') {
-    const btn = document.createElement('button');
-    btn.className = 'fight-resolve-btn';
-    btn.type = 'button';
-    btn.textContent = 'Strike!';
-    btn.addEventListener('click', () => {
-      btn.remove();
-      if (onStrike) onStrike();
-      // Don't auto-resolve — wait for moveMade so we know who died.
-    });
-    overlay.appendChild(btn);
-  } else if (mode === 'wait') {
-    // caller stores resolve and triggers it on remote signal
-  } else {
-    setTimeout(resolve, FIGHT_CLASH_MS);
-  }
-  return resolve;
+  return { resolve, update };
 }
 
 
@@ -753,7 +778,10 @@ socket.on('paired', ({ gameId, color, fen, pieces, you, opponent, yourPicture, o
   startBoard(fen, color);
 });
 
-socket.on('captureWindow', ({ from, to, attackerColor }) => {
+socket.on('captureWindow', ({
+  from, to, attackerColor, defenderSquare,
+  attackerHp, defenderHp, turn,
+}) => {
   const localIsAttacker = attackerColor === myColor;
 
   // Opponent's chessboard hasn't moved the attacker yet; do a visual-only move.
@@ -762,22 +790,17 @@ socket.on('captureWindow', ({ from, to, attackerColor }) => {
   }
 
   const mover = currentPieces[from];
-  let capturedSquare = to;
-  let defender = currentPieces[to];
-  let isEP = false;
-  if (mover && mover.type === 'p' && from[0] !== to[0] && !defender) {
-    isEP = true;
-    capturedSquare = to[0] + (mover.color === 'w' ? '5' : '4');
-    defender = currentPieces[capturedSquare];
-  }
+  const capturedSquare = defenderSquare || to;
+  const isEP = capturedSquare !== to;
+  const defender = currentPieces[capturedSquare];
   if (!mover || !defender) return;
 
-  if (pendingFightResolve) {
-    const prev = pendingFightResolve;
-    pendingFightResolve = null;
-    prev();
+  if (currentDuel) {
+    const prev = currentDuel;
+    currentDuel = null;
+    prev.resolve();
   }
-  pendingFightResolve = playCaptureAnimation({
+  currentDuel = playCaptureAnimation({
     capturedSquare,
     attackerSquare: to,
     isEnPassant: isEP,
@@ -785,9 +808,16 @@ socket.on('captureWindow', ({ from, to, attackerColor }) => {
     attackerColor: mover.color,
     defenderType: defender.type,
     defenderColor: defender.color,
-    mode: localIsAttacker ? 'manual' : 'wait',
-    onStrike: () => socket.emit('resolveCapture'),
+    attackerHp,
+    defenderHp,
+    initialTurn: turn || 'attacker',
+    localRole: localIsAttacker ? 'attacker' : 'defender',
+    onStrike: () => socket.emit('duelStrike'),
   });
+});
+
+socket.on('duelUpdate', ({ attackerHp, defenderHp, turn }) => {
+  if (currentDuel) currentDuel.update({ attackerHp, defenderHp, turn });
 });
 
 socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat }) => {
@@ -809,10 +839,10 @@ socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat }) => {
   updateStatus();
 
   awaitingCapture = false;
-  if (pendingFightResolve) {
-    const r = pendingFightResolve;
-    pendingFightResolve = null;
-    r(attackerDied ? 'attacker' : 'defender');
+  if (currentDuel) {
+    const d = currentDuel;
+    currentDuel = null;
+    d.resolve(attackerDied ? 'attacker' : 'defender');
   }
 });
 

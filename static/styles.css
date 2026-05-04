@@ -297,8 +297,36 @@ button:disabled { opacity: 0.5; cursor: default; }
   0%, 100% { transform: translateX(-50%) scale(1); }
   50%      { transform: translateX(-50%) scale(1.08); }
 }
-.fight-defender.fight-fly {
+.fight-defender.fight-fly,
+.fight-attacker.fight-fly {
   animation: fightFly 0.85s cubic-bezier(.45, 0, .8, .55) forwards;
+}
+.fight-hp {
+  position: absolute;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(20, 20, 20, 0.78);
+  padding: 1px 5px;
+  border-radius: 3px;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.fight-hp--attacker { left: 2%; top: 1%; }
+.fight-hp--defender { left: 36%; top: 1%; }
+.fight-overlay--solo .fight-hp--defender { left: 19%; }
+.fight-waiting {
+  position: absolute;
+  left: 50%;
+  bottom: -42px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: rgba(20, 20, 20, 0.65);
+  color: #fff;
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 5px;
+  white-space: nowrap;
 }
 @keyframes fightFly {
   to {

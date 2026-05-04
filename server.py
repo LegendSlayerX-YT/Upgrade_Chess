@@ -333,15 +333,14 @@ def on_find_game(payload):
         leave_ended_game(sid)
         pair(sid)
 
-def commit_move(game, candidate, move_info, san, player_color):
+def commit_move(game, candidate, move_info, san, player_color, combat_result=None):
     game_id = game["id"]
     board = game["board"]
 
-    combat_result = None
     san_used = san
     attacker_piece = game["pieces"].get(move_info["from"])
 
-    if move_info["is_capture"] and attacker_piece:
+    if move_info["is_capture"] and attacker_piece and combat_result is None:
         if move_info["is_en_passant"]:
             ep_rank = "5" if move_info["color"] == "w" else "4"
             defender_sq_alg = move_info["to"][0] + ep_rank
@@ -467,12 +466,35 @@ def on_move(payload):
         }
 
         if is_capture:
+            attacker_piece = game["pieces"].get(from_alg)
+            if is_en_passant:
+                ep_rank = "5" if mover_color == "w" else "4"
+                defender_sq_alg = to_alg[0] + ep_rank
+            else:
+                defender_sq_alg = to_alg
+            defender_piece = game["pieces"].get(defender_sq_alg)
+
+            if not attacker_piece or not defender_piece:
+                commit_move(game, candidate, move_info, san, player_color)
+                return
+
+            defender_color = "b" if mover_color == "w" else "w"
+            defender_sid = game["black"] if defender_color == "b" else game["white"]
             game["pending_capture"] = {
                 "attacker_sid": sid,
+                "defender_sid": defender_sid,
                 "candidate": candidate,
                 "move_info": move_info,
                 "san": san,
                 "player_color": player_color,
+                "attacker_color": mover_color,
+                "defender_color": defender_color,
+                "defender_square": defender_sq_alg,
+                "attacker_hp": attacker_piece["hp"],
+                "defender_hp": defender_piece["hp"],
+                "attacker_dmg": attacker_piece["dmg"],
+                "defender_dmg": defender_piece["dmg"],
+                "turn": "attacker",
             }
             socketio.emit(
                 "captureWindow",
@@ -481,6 +503,13 @@ def on_move(payload):
                     "to": to_alg,
                     "promotion": promotion_letter,
                     "attackerColor": mover_color,
+                    "defenderColor": defender_color,
+                    "defenderSquare": defender_sq_alg,
+                    "attackerHp": attacker_piece["hp"],
+                    "defenderHp": defender_piece["hp"],
+                    "attackerDmg": attacker_piece["dmg"],
+                    "defenderDmg": defender_piece["dmg"],
+                    "turn": "attacker",
                 },
                 to=game_id,
             )
@@ -539,8 +568,8 @@ def on_decline_draw():
         game["draw_offer_by"] = None
         socketio.emit("drawDeclined", to=game_id)
 
-@socketio.on("resolveCapture")
-def on_resolve_capture():
+@socketio.on("duelStrike")
+def on_duel_strike():
     from flask import request
     sid = request.sid
     with state_lock:
@@ -549,15 +578,49 @@ def on_resolve_capture():
         if not game or game["state"] != "active":
             return
         pending = game.get("pending_capture")
-        if not pending or pending["attacker_sid"] != sid:
+        if not pending:
             return
-        game["pending_capture"] = None
-        commit_move(
-            game,
-            pending["candidate"],
-            pending["move_info"],
-            pending["san"],
-            pending["player_color"],
+
+        if pending["turn"] == "attacker":
+            if pending["attacker_sid"] != sid:
+                return
+            pending["defender_hp"] = max(pending["defender_hp"] - pending["attacker_dmg"], 0)
+        else:
+            if pending["defender_sid"] != sid:
+                return
+            pending["attacker_hp"] = max(pending["attacker_hp"] - pending["defender_dmg"], 0)
+
+        attacker_alive = pending["attacker_hp"] > 0
+        defender_alive = pending["defender_hp"] > 0
+
+        if not attacker_alive or not defender_alive:
+            combat_result = {
+                "attacker_survived": attacker_alive,
+                "defender_survived": defender_alive,
+                "attacker_hp": pending["attacker_hp"],
+                "defender_hp": pending["defender_hp"],
+                "log": [],
+            }
+            game["pending_capture"] = None
+            commit_move(
+                game,
+                pending["candidate"],
+                pending["move_info"],
+                pending["san"],
+                pending["player_color"],
+                combat_result=combat_result,
+            )
+            return
+
+        pending["turn"] = "defender" if pending["turn"] == "attacker" else "attacker"
+        socketio.emit(
+            "duelUpdate",
+            {
+                "attackerHp": pending["attacker_hp"],
+                "defenderHp": pending["defender_hp"],
+                "turn": pending["turn"],
+            },
+            to=game_id,
         )
 
 @socketio.on("resign")
