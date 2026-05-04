@@ -105,13 +105,27 @@ promoChoices.addEventListener('click', (e) => {
   if (!btn || !pendingPromotion) return;
   const piece = btn.dataset.piece;
   const { from, to } = pendingPromotion;
+  hidePromotionPicker();
+
+  const legal = chess.moves({ square: from, verbose: true })
+    .find(m => m.to === to && m.promotion === piece);
+  if (!legal) {
+    if (board) board.position(chess.fen());
+    return;
+  }
+
+  if (legal.captured) {
+    awaitingCapture = true;
+    socket.emit('move', { from, to, promotion: piece });
+    return;
+  }
+
   let move;
   try {
     move = chess.move({ from, to, promotion: piece });
   } catch (_) {
     move = null;
   }
-  hidePromotionPicker();
   if (!move) {
     if (board) board.position(chess.fen());
     return;
@@ -394,6 +408,133 @@ function renderStats() {
   `).join('');
 }
 
+const PIECE_IMG = (color, type) => `/static/img/chesspieces/wikipedia/${color}${TYPE_NAME[type]}.png`;
+
+function getSquareEl(square) {
+  return boardEl.querySelector(`.square-${square}`)
+      || boardEl.querySelector(`[data-square="${square}"]`);
+}
+
+const FIGHT_CLASH_MS = 500;
+const FIGHT_FLY_MS = 850;
+
+function hideRealPieceAt(square) {
+  let restored = false;
+  let pieceEl = null;
+  let intervalId = null;
+  let attempts = 0;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    if (pieceEl) pieceEl.style.visibility = '';
+  };
+  const tryHide = () => {
+    if (restored || pieceEl) return;
+    const sq = getSquareEl(square);
+    const found = sq && sq.querySelector('img');
+    if (found) {
+      pieceEl = found;
+      pieceEl.style.visibility = 'hidden';
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    } else if (++attempts >= 30) {
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    }
+  };
+  tryHide();
+  if (!pieceEl) intervalId = setInterval(tryHide, 40);
+  return restore;
+}
+
+let pendingFightResolve = null;
+let awaitingCapture = false;
+
+function playCaptureAnimation({
+  capturedSquare, attackerSquare, isEnPassant,
+  attackerType, attackerColor, defenderType, defenderColor,
+  mode, onStrike,
+}) {
+  const sqEl = getSquareEl(capturedSquare);
+  if (!sqEl) return;
+  const rect = sqEl.getBoundingClientRect();
+  const size = rect.width;
+  if (!size) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'fight-overlay' + (isEnPassant ? ' fight-overlay--solo' : '');
+  overlay.style.left = rect.left + 'px';
+  overlay.style.top = rect.top + 'px';
+  overlay.style.width = size + 'px';
+  overlay.style.height = size + 'px';
+
+  const flash = document.createElement('div');
+  flash.className = 'fight-flash';
+  overlay.appendChild(flash);
+
+  let atk = null;
+  if (!isEnPassant && attackerType && attackerColor) {
+    atk = document.createElement('img');
+    atk.src = PIECE_IMG(attackerColor, attackerType);
+    atk.alt = '';
+    atk.draggable = false;
+    atk.className = 'fight-attacker';
+    overlay.appendChild(atk);
+  }
+
+  const def = document.createElement('img');
+  def.src = PIECE_IMG(defenderColor, defenderType);
+  def.alt = '';
+  def.draggable = false;
+  def.className = 'fight-defender';
+
+  const sign = Math.random() < 0.5 ? -1 : 1;
+  const dx = sign * (size * 4 + Math.random() * size * 3);
+  const dy = -size * 3 - Math.random() * size * 3;
+  const rot = Math.random() * 720 - 360;
+  def.style.setProperty('--fly-x', dx + 'px');
+  def.style.setProperty('--fly-y', dy + 'px');
+  def.style.setProperty('--fly-rot', rot + 'deg');
+
+  overlay.appendChild(def);
+  document.body.appendChild(overlay);
+
+  // Hide the real chessboard.js attacker piece while we show the shrunk overlay
+  // pair on the same square. (Skip for en passant — different squares.)
+  let restoreReal = null;
+  if (!isEnPassant && attackerSquare) {
+    restoreReal = hideRealPieceAt(attackerSquare);
+  }
+
+  let resolved = false;
+  const resolve = () => {
+    if (resolved) return;
+    resolved = true;
+    if (atk) atk.remove();
+    if (restoreReal) restoreReal();
+    def.classList.add('fight-fly');
+    setTimeout(() => overlay.remove(), FIGHT_FLY_MS + 80);
+  };
+
+  if (mode === 'manual') {
+    const btn = document.createElement('button');
+    btn.className = 'fight-resolve-btn';
+    btn.type = 'button';
+    btn.textContent = 'Strike!';
+    btn.addEventListener('click', () => {
+      btn.remove();
+      if (onStrike) onStrike();
+      resolve();
+    });
+    overlay.appendChild(btn);
+  } else if (mode === 'wait') {
+    // caller stores resolve and triggers it on remote signal
+  } else {
+    setTimeout(resolve, FIGHT_CLASH_MS);
+  }
+  return resolve;
+}
+
+
 function setStatus(msg) { statusEl.textContent = msg; }
 
 function renderHistory() {
@@ -418,6 +559,7 @@ function updateStatus() {
 function onDragStart(_source, piece) {
   if (!gameActive) return false;
   if (chess.isGameOver()) return false;
+  if (awaitingCapture) return false;
   if ((myColor === 'w' && piece.startsWith('b')) ||
       (myColor === 'b' && piece.startsWith('w'))) return false;
   if (chess.turn() !== myColor) return false;
@@ -436,6 +578,16 @@ function onDrop(source, target) {
   if (isPromotionMove(source, target)) {
     const color = chess.get(source).color;
     showPromotionPicker(source, target, color);
+    return;
+  }
+
+  const legal = chess.moves({ square: source, verbose: true })
+    .find(m => m.to === target);
+  if (!legal) return 'snapback';
+
+  if (legal.captured) {
+    awaitingCapture = true;
+    socket.emit('move', { from: source, to: target });
     return;
   }
 
@@ -584,6 +736,43 @@ socket.on('paired', ({ gameId, color, fen, pieces, you, opponent, yourPicture, o
   startBoard(fen, color);
 });
 
+socket.on('captureWindow', ({ from, to, attackerColor }) => {
+  const localIsAttacker = attackerColor === myColor;
+
+  // Opponent's chessboard hasn't moved the attacker yet; do a visual-only move.
+  if (!localIsAttacker && board) {
+    board.move(`${from}-${to}`);
+  }
+
+  const mover = currentPieces[from];
+  let capturedSquare = to;
+  let defender = currentPieces[to];
+  let isEP = false;
+  if (mover && mover.type === 'p' && from[0] !== to[0] && !defender) {
+    isEP = true;
+    capturedSquare = to[0] + (mover.color === 'w' ? '5' : '4');
+    defender = currentPieces[capturedSquare];
+  }
+  if (!mover || !defender) return;
+
+  if (pendingFightResolve) {
+    const prev = pendingFightResolve;
+    pendingFightResolve = null;
+    prev();
+  }
+  pendingFightResolve = playCaptureAnimation({
+    capturedSquare,
+    attackerSquare: to,
+    isEnPassant: isEP,
+    attackerType: mover.type,
+    attackerColor: mover.color,
+    defenderType: defender.type,
+    defenderColor: defender.color,
+    mode: localIsAttacker ? 'manual' : 'wait',
+    onStrike: () => socket.emit('resolveCapture'),
+  });
+});
+
 socket.on('moveMade', ({ from, to, promotion, fen, pieces }) => {
   if (pieces) currentPieces = pieces;
   if (chess.fen() !== fen) {
@@ -597,10 +786,19 @@ socket.on('moveMade', ({ from, to, promotion, fen, pieces }) => {
   renderHistory();
   renderStats();
   updateStatus();
+
+  awaitingCapture = false;
+  if (pendingFightResolve) {
+    const r = pendingFightResolve;
+    pendingFightResolve = null;
+    r();
+  }
 });
 
 socket.on('illegalMove', ({ reason }) => {
   setStatus(`Move rejected: ${reason}`);
+  awaitingCapture = false;
+  if (board) board.position(chess.fen());
 });
 
 socket.on('drawOfferSent', () => {

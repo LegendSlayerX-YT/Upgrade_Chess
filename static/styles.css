@@ -247,6 +247,88 @@ button:disabled { opacity: 0.5; cursor: default; }
 #pieceTooltip .tt-hp { color: #6fe08c; }
 #pieceTooltip .tt-dmg { color: #ff8a78; }
 
+.fight-overlay {
+  position: fixed;
+  pointer-events: none;
+  z-index: 1200;
+  overflow: visible;
+}
+.fight-attacker, .fight-defender {
+  position: absolute;
+  top: 17%;
+  width: 62%;
+  height: 62%;
+  filter: drop-shadow(0 0 8px rgba(255, 70, 70, 0.85));
+}
+.fight-attacker {
+  left: 2%;
+  transform-origin: 80% 60%;
+  animation: fightClashAtk 0.7s ease-in-out infinite;
+}
+.fight-defender {
+  left: 36%;
+  transform-origin: 20% 60%;
+  animation: fightClashDef 0.7s ease-in-out infinite;
+}
+.fight-overlay--solo .fight-defender {
+  left: 19%;
+  transform-origin: 50% 60%;
+}
+@keyframes fightClashAtk {
+  0%, 100% { transform: translate(0, 0) rotate(0); }
+  50%      { transform: translate(11%, -3%) rotate(7deg); }
+}
+@keyframes fightClashDef {
+  0%, 100% { transform: translate(0, 0) rotate(0); }
+  50%      { transform: translate(-7%, -3%) rotate(-9deg); }
+}
+.fight-resolve-btn {
+  position: absolute;
+  left: 50%;
+  bottom: -42px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  background: #c14a3a;
+  color: #fff;
+  border: 1px solid #8b3328;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 5px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+  margin: 0;
+  animation: fightBtnPulse 1.2s ease-in-out infinite;
+}
+.fight-resolve-btn:hover { background: #d35a48; }
+@keyframes fightBtnPulse {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50%      { transform: translateX(-50%) scale(1.08); }
+}
+.fight-defender.fight-fly {
+  animation: fightFly 0.85s cubic-bezier(.45, 0, .8, .55) forwards;
+}
+@keyframes fightFly {
+  to {
+    transform: translate(var(--fly-x), var(--fly-y)) rotate(var(--fly-rot)) scale(0.3);
+    opacity: 0;
+  }
+}
+.fight-flash {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,210,90,0.85) 0%, rgba(255,120,40,0.5) 40%, rgba(255,60,40,0) 70%);
+  animation: fightFlash 0.45s ease-out forwards;
+  pointer-events: none;
+}
+@keyframes fightFlash {
+  0%   { transform: scale(0.2); opacity: 0; }
+  35%  { transform: scale(1.1); opacity: 0.9; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
 .promo-choices { display: flex; gap: 8px; }
 .promo-btn {
   width: 64px; height: 64px;

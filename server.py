@@ -153,6 +153,7 @@ def start_game(white_sid, black_sid):
         "draw_offer_by": None,
         "state": "active",
         "rematch_requests": set(),
+        "pending_capture": None,
     }
     sid_to_game[white_sid] = game_id
     sid_to_game[black_sid] = game_id
@@ -275,6 +276,45 @@ def on_find_game(payload):
         leave_ended_game(sid)
         pair(sid)
 
+def commit_move(game, candidate, move_info, san, player_color):
+    game_id = game["id"]
+    board = game["board"]
+    board.push(candidate)
+    game["pieces"] = apply_move_to_pieces(game["pieces"], move_info)
+
+    if game["draw_offer_by"]:
+        game["draw_offer_by"] = None
+        socketio.emit("drawOfferCleared", to=game_id)
+
+    socketio.emit(
+        "moveMade",
+        {
+            "from": move_info["from"],
+            "to": move_info["to"],
+            "promotion": move_info["promotion"],
+            "san": san,
+            "fen": board.fen(),
+            "turn": "w" if board.turn == chess.WHITE else "b",
+            "pieces": game["pieces"],
+        },
+        to=game_id,
+    )
+
+    if board.is_game_over(claim_draw=True):
+        if board.is_checkmate():
+            outcome = {"type": "checkmate", "winner": player_color}
+        elif board.is_stalemate():
+            outcome = {"type": "stalemate"}
+        elif board.is_repetition(3) or board.can_claim_threefold_repetition():
+            outcome = {"type": "threefold"}
+        elif board.is_insufficient_material():
+            outcome = {"type": "insufficient"}
+        elif board.can_claim_draw():
+            outcome = {"type": "draw"}
+        else:
+            outcome = {"type": "over"}
+        end_game(game_id, outcome)
+
 @socketio.on("move")
 def on_move(payload):
     from flask import request
@@ -283,6 +323,9 @@ def on_move(payload):
         game_id = sid_to_game.get(sid)
         game = games.get(game_id) if game_id else None
         if not game or game["state"] != "active":
+            return
+        if game.get("pending_capture"):
+            emit("illegalMove", {"reason": "capture pending"})
             return
         board = game["board"]
         turn_color = "white" if board.turn == chess.WHITE else "black"
@@ -319,8 +362,6 @@ def on_move(payload):
         mover_color = "w" if board.turn == chess.WHITE else "b"
         promotion_letter = chess.piece_symbol(candidate.promotion) if candidate.promotion else None
 
-        board.push(candidate)
-
         move_info = {
             "from": from_alg,
             "to": to_alg,
@@ -331,40 +372,28 @@ def on_move(payload):
             "is_kingside": is_kingside,
             "promotion": promotion_letter,
         }
-        game["pieces"] = apply_move_to_pieces(game["pieces"], move_info)
 
-        if game["draw_offer_by"]:
-            game["draw_offer_by"] = None
-            socketio.emit("drawOfferCleared", to=game_id)
-
-        socketio.emit(
-            "moveMade",
-            {
-                "from": from_alg,
-                "to": to_alg,
-                "promotion": promotion_letter,
+        if is_capture:
+            game["pending_capture"] = {
+                "attacker_sid": sid,
+                "candidate": candidate,
+                "move_info": move_info,
                 "san": san,
-                "fen": board.fen(),
-                "turn": "w" if board.turn == chess.WHITE else "b",
-                "pieces": game["pieces"],
-            },
-            to=game_id,
-        )
+                "player_color": player_color,
+            }
+            socketio.emit(
+                "captureWindow",
+                {
+                    "from": from_alg,
+                    "to": to_alg,
+                    "promotion": promotion_letter,
+                    "attackerColor": mover_color,
+                },
+                to=game_id,
+            )
+            return
 
-        if board.is_game_over(claim_draw=True):
-            if board.is_checkmate():
-                outcome = {"type": "checkmate", "winner": player_color}
-            elif board.is_stalemate():
-                outcome = {"type": "stalemate"}
-            elif board.is_repetition(3) or board.can_claim_threefold_repetition():
-                outcome = {"type": "threefold"}
-            elif board.is_insufficient_material():
-                outcome = {"type": "insufficient"}
-            elif board.can_claim_draw():
-                outcome = {"type": "draw"}
-            else:
-                outcome = {"type": "over"}
-            end_game(game_id, outcome)
+        commit_move(game, candidate, move_info, san, player_color)
 
 @socketio.on("offerDraw")
 def on_offer_draw():
@@ -416,6 +445,27 @@ def on_decline_draw():
             return
         game["draw_offer_by"] = None
         socketio.emit("drawDeclined", to=game_id)
+
+@socketio.on("resolveCapture")
+def on_resolve_capture():
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        game_id = sid_to_game.get(sid)
+        game = games.get(game_id) if game_id else None
+        if not game or game["state"] != "active":
+            return
+        pending = game.get("pending_capture")
+        if not pending or pending["attacker_sid"] != sid:
+            return
+        game["pending_capture"] = None
+        commit_move(
+            game,
+            pending["candidate"],
+            pending["move_info"],
+            pending["san"],
+            pending["player_color"],
+        )
 
 @socketio.on("resign")
 def on_resign():
