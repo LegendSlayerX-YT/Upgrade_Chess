@@ -205,8 +205,12 @@ def make_game_id():
 def start_game(white_sid, black_sid):
     game_id = make_game_id()
     board = chess.Board()
-    white_side = (pending_levels.get(white_sid) or {}).get("w", {})
-    black_side = (pending_levels.get(black_sid) or {}).get("b", {})
+    saved_levels = {
+        white_sid: pending_levels.get(white_sid) or {"w": {}, "b": {}},
+        black_sid: pending_levels.get(black_sid) or {"w": {}, "b": {}},
+    }
+    white_side = saved_levels[white_sid].get("w", {})
+    black_side = saved_levels[black_sid].get("b", {})
     pending_levels.pop(white_sid, None)
     pending_levels.pop(black_sid, None)
     pieces = build_pieces(white_side, black_side)
@@ -220,6 +224,7 @@ def start_game(white_sid, black_sid):
         "state": "active",
         "rematch_requests": set(),
         "pending_capture": None,
+        "levels_by_sid": saved_levels,
     }
     sid_to_game[white_sid] = game_id
     sid_to_game[black_sid] = game_id
@@ -362,10 +367,20 @@ def commit_move(game, candidate, move_info, san, player_color, combat_result=Non
     attacker_died = bool(combat_result and not combat_result["attacker_survived"])
     is_king_attack = bool(move_info.get("is_king_attack"))
     king_died_attacker = attacker_died and attacker_piece and attacker_piece["type"] == "k"
+
+    defender_piece_pre = None
+    if move_info["is_capture"]:
+        if move_info["is_en_passant"]:
+            ep_rank = "5" if move_info["color"] == "w" else "4"
+            defender_sq_pre = move_info["to"][0] + ep_rank
+        else:
+            defender_sq_pre = move_info["to"]
+        defender_piece_pre = game["pieces"].get(defender_sq_pre)
     defender_king_died = (
-        is_king_attack
-        and combat_result is not None
+        combat_result is not None
         and not combat_result["defender_survived"]
+        and defender_piece_pre is not None
+        and defender_piece_pre["type"] == "k"
     )
 
     if is_king_attack:
@@ -712,6 +727,10 @@ def on_request_rematch():
         if opponent_sid in game["rematch_requests"]:
             new_white = game["black"]
             new_black = game["white"]
+            saved = game.get("levels_by_sid") or {}
+            for s in (new_white, new_black):
+                if s in saved:
+                    pending_levels[s] = saved[s]
             sid_to_game.pop(game["white"], None)
             sid_to_game.pop(game["black"], None)
             socketio.server.leave_room(new_white, game_id, namespace="/")
