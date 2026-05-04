@@ -161,6 +161,18 @@ const PIECE_BASE = {
   q: { hp: 10, dmg: 10 },
   k: { hp: 10, dmg: 10 },
 };
+const PIECE_LEVEL_MULT = { p: 1, n: 3, b: 3, r: 4, q: 7, k: 1 };
+const HP_TO_DMG_INC_RATIO = 1.5;
+function pieceStats(type, level) {
+  const base = PIECE_BASE[type];
+  const mult = PIECE_LEVEL_MULT[type];
+  const incDmg = base.dmg * mult;
+  const incHp = Math.floor(incDmg * HP_TO_DMG_INC_RATIO);
+  return {
+    hp: base.hp + (level - 1) * incHp,
+    dmg: base.dmg + (level - 1) * incDmg,
+  };
+}
 const SLOT_DEFS = [
   { slot: 'Ra', type: 'r', file: 'a' },
   { slot: 'Nb', type: 'n', file: 'b' },
@@ -238,9 +250,10 @@ function buildPreviewPieces() {
     const bSq = wSq[0] + (wSq[1] === '1' ? '8' : '7');
     const wLvl = clampLevel(myLevels.w[slot] ?? 1);
     const bLvl = clampLevel(myLevels.b[slot] ?? 1);
-    const base = PIECE_BASE[type];
-    pieces[wSq] = { id: 'w'+slot, type, color: 'w', level: wLvl, hp: base.hp*wLvl, dmg: base.dmg*wLvl };
-    pieces[bSq] = { id: 'b'+slot, type, color: 'b', level: bLvl, hp: base.hp*bLvl, dmg: base.dmg*bLvl };
+    const wStats = pieceStats(type, wLvl);
+    const bStats = pieceStats(type, bLvl);
+    pieces[wSq] = { id: 'w'+slot, type, color: 'w', level: wLvl, hp: wStats.hp, dmg: wStats.dmg };
+    pieces[bSq] = { id: 'b'+slot, type, color: 'b', level: bLvl, hp: bStats.hp, dmg: bStats.dmg };
   }
   return pieces;
 }
@@ -263,11 +276,14 @@ function renderSetup() {
     : (type === 'p' ? '7' : '8');
   setupGrid.innerHTML = ordered.map(({ slot, type, file }) => {
     const label = file + rankFor(type);
+    const isKing = type === 'k';
+    if (isKing) sideLevels[slot] = 1;
+    const inputAttrs = isKing ? 'disabled title="The king cannot be upgraded."' : '';
     return `
-      <div class="setup-cell">
+      <div class="setup-cell${isKing ? ' locked' : ''}">
         <img src="/static/img/chesspieces/wikipedia/${activeSide}${TYPE_NAME[type]}.png" alt="${type}" />
         <div class="slot-label">${label}</div>
-        <input type="number" min="1" max="99" data-slot="${slot}" value="${sideLevels[slot] ?? 1}" />
+        <input type="number" min="1" max="99" data-slot="${slot}" value="${sideLevels[slot] ?? 1}" ${inputAttrs} />
       </div>
     `;
   }).join('');

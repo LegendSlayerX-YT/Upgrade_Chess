@@ -30,6 +30,8 @@ PIECE_BASE = {
     "k": {"hp": 10, "dmg": 10},
 }
 
+PIECE_LEVEL_MULT = {"p": 1, "n": 3, "b": 3, "r": 4, "q": 7, "k": 1}
+
 SLOT_TO_START_SQUARE = {
     "Ra": "a1", "Nb": "b1", "Bc": "c1", "Q": "d1", "K": "e1",
     "Bf": "f1", "Ng": "g1", "Rh": "h1",
@@ -74,9 +76,17 @@ def clamp_level(n):
         return 99
     return v
 
+HP_TO_DMG_INC_RATIO = 1.5
+
 def piece_stats(piece_type, level):
     base = PIECE_BASE[piece_type]
-    return {"hp": base["hp"] * level, "dmg": base["dmg"] * level}
+    mult = PIECE_LEVEL_MULT[piece_type]
+    inc_dmg = base["dmg"] * mult
+    inc_hp = int(inc_dmg * HP_TO_DMG_INC_RATIO)
+    return {
+        "hp": base["hp"] + (level - 1) * inc_hp,
+        "dmg": base["dmg"] + (level - 1) * inc_dmg,
+    }
 
 def build_pieces(white_levels, black_levels):
     pieces = {}
@@ -84,8 +94,12 @@ def build_pieces(white_levels, black_levels):
         piece_type = SLOT_TYPES[slot]
         b_square = w_square[0] + ("8" if w_square[1] == "1" else "7")
 
-        w_level = clamp_level((white_levels or {}).get(slot, 1))
-        b_level = clamp_level((black_levels or {}).get(slot, 1))
+        if piece_type == "k":
+            w_level = 1
+            b_level = 1
+        else:
+            w_level = clamp_level((white_levels or {}).get(slot, 1))
+            b_level = clamp_level((black_levels or {}).get(slot, 1))
         w_stats = piece_stats(piece_type, w_level)
         b_stats = piece_stats(piece_type, b_level)
 
