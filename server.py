@@ -30,7 +30,7 @@ PIECE_BASE = {
     "k": {"hp": 10, "dmg": 1000000},
 }
 
-PIECE_LEVEL_MULT = {"p": 1, "n": 3, "b": 3, "r": 4, "q": 7, "k": 1}
+PIECE_LEVEL_MULT = {"p": 1, "n": 2, "b": 2, "r": 3, "q": 4, "k": 1}
 
 SLOT_TO_START_SQUARE = {
     "Ra": "a1", "Nb": "b1", "Bc": "c1", "Q": "d1", "K": "e1",
