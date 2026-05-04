@@ -624,9 +624,21 @@ function onDrop(source, target) {
     return;
   }
 
+  const targetPiece = currentPieces[target];
+  const moverPiece = currentPieces[source];
+  const isKingAttack = !!(
+    targetPiece && moverPiece &&
+    targetPiece.type === 'k' && targetPiece.color !== moverPiece.color
+  );
+
   const legal = chess.moves({ square: source, verbose: true })
     .find(m => m.to === target);
-  if (!legal) return 'snapback';
+  if (!legal && !isKingAttack) return 'snapback';
+  if (isKingAttack) {
+    awaitingCapture = true;
+    socket.emit('move', { from: source, to: target });
+    return 'snapback';
+  }
 
   if (legal.captured) {
     awaitingCapture = true;

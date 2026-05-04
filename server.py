@@ -113,6 +113,15 @@ def build_pieces(white_levels, black_levels):
         }
     return pieces
 
+def can_attack_king(board, candidate, target_sq):
+    target = board.piece_at(target_sq)
+    if not target or target.piece_type != chess.KING:
+        return False
+    board.set_piece_at(target_sq, chess.Piece(chess.QUEEN, target.color))
+    legal = candidate in board.legal_moves
+    board.set_piece_at(target_sq, target)
+    return legal
+
 def resolve_combat(attacker, defender):
     a_hp, d_hp = attacker["hp"], defender["hp"]
     a_dmg, d_dmg = attacker["dmg"], defender["dmg"]
@@ -351,9 +360,35 @@ def commit_move(game, candidate, move_info, san, player_color, combat_result=Non
             combat_result = resolve_combat(attacker_piece, defender_piece)
 
     attacker_died = bool(combat_result and not combat_result["attacker_survived"])
-    king_died = attacker_died and attacker_piece and attacker_piece["type"] == "k"
+    is_king_attack = bool(move_info.get("is_king_attack"))
+    king_died_attacker = attacker_died and attacker_piece and attacker_piece["type"] == "k"
+    defender_king_died = (
+        is_king_attack
+        and combat_result is not None
+        and not combat_result["defender_survived"]
+    )
 
-    if attacker_died:
+    if is_king_attack:
+        from_sq = chess.parse_square(move_info["from"])
+        to_sq = chess.parse_square(move_info["to"])
+        attacker_chess_piece = board.piece_at(from_sq)
+        if combat_result and combat_result["attacker_survived"]:
+            board.remove_piece_at(from_sq)
+            if move_info["promotion"] and attacker_chess_piece:
+                promo_chess_type = PROMO_LETTER_TO_PIECE[move_info["promotion"]]
+                board.set_piece_at(to_sq, chess.Piece(promo_chess_type, attacker_chess_piece.color))
+            elif attacker_chess_piece:
+                board.set_piece_at(to_sq, attacker_chess_piece)
+        else:
+            board.remove_piece_at(from_sq)
+        board.turn = not board.turn
+        board.ep_square = None
+        board.halfmove_clock = 0
+        if move_info["color"] == "b":
+            board.fullmove_number += 1
+        board.clear_stack()
+        san_used = f"{move_info['from']}x{move_info['to']}†"
+    elif attacker_died:
         from_sq = chess.parse_square(move_info["from"])
         board.remove_piece_at(from_sq)
         board.turn = not board.turn
@@ -387,9 +422,13 @@ def commit_move(game, candidate, move_info, san, player_color, combat_result=Non
         to=game_id,
     )
 
-    if king_died:
+    if king_died_attacker:
         winner = "white" if attacker_piece["color"] == "b" else "black"
         end_game(game_id, {"type": "kingDeath", "winner": winner})
+        return
+
+    if defender_king_died:
+        end_game(game_id, {"type": "kingDeath", "winner": player_color})
         return
 
     if board.is_game_over(claim_draw=True):
@@ -438,19 +477,32 @@ def on_move(payload):
 
         promo_piece = PROMO_LETTER_TO_PIECE.get(promo_letter, chess.QUEEN)
         candidate = chess.Move(from_sq, to_sq, promotion=promo_piece)
+        is_king_attack = False
         if candidate not in board.legal_moves:
             plain = chess.Move(from_sq, to_sq)
             if plain in board.legal_moves:
                 candidate = plain
+            elif can_attack_king(board, candidate, to_sq):
+                is_king_attack = True
+            elif can_attack_king(board, plain, to_sq):
+                candidate = plain
+                is_king_attack = True
             else:
                 emit("illegalMove", {"reason": "illegal"})
                 return
 
-        is_en_passant = board.is_en_passant(candidate)
-        is_capture = board.is_capture(candidate)
-        is_castle = board.is_castling(candidate)
-        is_kingside = board.is_kingside_castling(candidate)
-        san = board.san(candidate)
+        if is_king_attack:
+            is_en_passant = False
+            is_capture = True
+            is_castle = False
+            is_kingside = False
+            san = f"{from_alg}x{to_alg}"
+        else:
+            is_en_passant = board.is_en_passant(candidate)
+            is_capture = board.is_capture(candidate)
+            is_castle = board.is_castling(candidate)
+            is_kingside = board.is_kingside_castling(candidate)
+            san = board.san(candidate)
         mover_color = "w" if board.turn == chess.WHITE else "b"
         promotion_letter = chess.piece_symbol(candidate.promotion) if candidate.promotion else None
 
@@ -462,6 +514,7 @@ def on_move(payload):
             "is_capture": is_capture,
             "is_castle": is_castle,
             "is_kingside": is_kingside,
+            "is_king_attack": is_king_attack,
             "promotion": promotion_letter,
         }
 
