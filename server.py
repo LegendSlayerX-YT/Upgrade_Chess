@@ -113,18 +113,61 @@ def build_pieces(white_levels, black_levels):
         }
     return pieces
 
-def apply_move_to_pieces(pieces, move_info):
+def resolve_combat(attacker, defender):
+    a_hp, d_hp = attacker["hp"], defender["hp"]
+    a_dmg, d_dmg = attacker["dmg"], defender["dmg"]
+    log = []
+    safety = 0
+    while a_hp > 0 and d_hp > 0 and safety < 1000:
+        d_hp -= a_dmg
+        log.append({"by": "attacker", "atk_hp": a_hp, "def_hp": max(d_hp, 0)})
+        if d_hp <= 0:
+            break
+        a_hp -= d_dmg
+        log.append({"by": "defender", "atk_hp": max(a_hp, 0), "def_hp": d_hp})
+        safety += 1
+    return {
+        "attacker_survived": a_hp > 0,
+        "defender_survived": d_hp > 0,
+        "attacker_hp": max(a_hp, 0),
+        "defender_hp": max(d_hp, 0),
+        "log": log,
+    }
+
+def apply_move_to_pieces(pieces, move_info, combat_result=None):
     nxt = dict(pieces)
     mover = nxt.get(move_info["from"])
     if not mover:
         return nxt
-    del nxt[move_info["from"]]
 
-    if move_info["is_en_passant"]:
-        ep_rank = "5" if move_info["color"] == "w" else "4"
-        nxt.pop(move_info["to"][0] + ep_rank, None)
-    elif move_info["is_capture"]:
-        nxt.pop(move_info["to"], None)
+    if move_info["is_capture"] and combat_result:
+        if move_info["is_en_passant"]:
+            ep_rank = "5" if move_info["color"] == "w" else "4"
+            defender_sq = move_info["to"][0] + ep_rank
+        else:
+            defender_sq = move_info["to"]
+
+        del nxt[move_info["from"]]
+        if combat_result["attacker_survived"]:
+            nxt.pop(defender_sq, None)
+            survivor = dict(mover)
+            survivor["hp"] = combat_result["attacker_hp"]
+            if move_info["promotion"]:
+                new_type = move_info["promotion"]
+                stats = piece_stats(new_type, survivor["level"])
+                survivor["type"] = new_type
+                survivor["hp"] = stats["hp"]
+                survivor["dmg"] = stats["dmg"]
+            nxt[move_info["to"]] = survivor
+        else:
+            defender = pieces.get(defender_sq)
+            if defender:
+                survivor = dict(defender)
+                survivor["hp"] = combat_result["defender_hp"]
+                nxt[defender_sq] = survivor
+        return nxt
+
+    del nxt[move_info["from"]]
 
     if move_info["is_castle"]:
         rank = "1" if move_info["color"] == "w" else "8"
@@ -293,8 +336,38 @@ def on_find_game(payload):
 def commit_move(game, candidate, move_info, san, player_color):
     game_id = game["id"]
     board = game["board"]
-    board.push(candidate)
-    game["pieces"] = apply_move_to_pieces(game["pieces"], move_info)
+
+    combat_result = None
+    san_used = san
+    attacker_piece = game["pieces"].get(move_info["from"])
+
+    if move_info["is_capture"] and attacker_piece:
+        if move_info["is_en_passant"]:
+            ep_rank = "5" if move_info["color"] == "w" else "4"
+            defender_sq_alg = move_info["to"][0] + ep_rank
+        else:
+            defender_sq_alg = move_info["to"]
+        defender_piece = game["pieces"].get(defender_sq_alg)
+        if defender_piece:
+            combat_result = resolve_combat(attacker_piece, defender_piece)
+
+    attacker_died = bool(combat_result and not combat_result["attacker_survived"])
+    king_died = attacker_died and attacker_piece and attacker_piece["type"] == "k"
+
+    if attacker_died:
+        from_sq = chess.parse_square(move_info["from"])
+        board.remove_piece_at(from_sq)
+        board.turn = not board.turn
+        board.ep_square = None
+        board.halfmove_clock = 0
+        if move_info["color"] == "b":
+            board.fullmove_number += 1
+        board.clear_stack()
+        san_used = f"{move_info['from']}x{move_info['to']}†"
+    else:
+        board.push(candidate)
+
+    game["pieces"] = apply_move_to_pieces(game["pieces"], move_info, combat_result)
 
     if game["draw_offer_by"]:
         game["draw_offer_by"] = None
@@ -306,13 +379,19 @@ def commit_move(game, candidate, move_info, san, player_color):
             "from": move_info["from"],
             "to": move_info["to"],
             "promotion": move_info["promotion"],
-            "san": san,
+            "san": san_used,
             "fen": board.fen(),
             "turn": "w" if board.turn == chess.WHITE else "b",
             "pieces": game["pieces"],
+            "combat": combat_result,
         },
         to=game_id,
     )
+
+    if king_died:
+        winner = "white" if attacker_piece["color"] == "b" else "black"
+        end_game(game_id, {"type": "kingDeath", "winner": winner})
+        return
 
     if board.is_game_over(claim_draw=True):
         if board.is_checkmate():

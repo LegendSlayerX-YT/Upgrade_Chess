@@ -46,7 +46,6 @@ function hidePlayerCards() {
 }
 
 const statusEl = document.getElementById('status');
-const historyEl = document.getElementById('history');
 const findBtn = document.getElementById('findBtn');
 const resignBtn = document.getElementById('resignBtn');
 const drawBtn = document.getElementById('drawBtn');
@@ -132,7 +131,6 @@ promoChoices.addEventListener('click', (e) => {
   }
   socket.emit('move', { from, to, promotion: piece });
   if (board) board.position(chess.fen());
-  renderHistory();
   updateStatus();
 });
 
@@ -522,12 +520,26 @@ function playCaptureAnimation({
   }
 
   let resolved = false;
-  const resolve = () => {
+  const resolve = (loser = 'defender') => {
     if (resolved) return;
     resolved = true;
-    if (atk) atk.remove();
-    if (restoreReal) restoreReal();
-    def.classList.add('fight-fly');
+    if (loser === 'attacker') {
+      def.style.visibility = 'hidden';
+      if (atk) {
+        const sign2 = Math.random() < 0.5 ? -1 : 1;
+        const dx2 = sign2 * (size * 4 + Math.random() * size * 3);
+        const dy2 = -size * 3 - Math.random() * size * 3;
+        const rot2 = Math.random() * 720 - 360;
+        atk.style.setProperty('--fly-x', dx2 + 'px');
+        atk.style.setProperty('--fly-y', dy2 + 'px');
+        atk.style.setProperty('--fly-rot', rot2 + 'deg');
+        atk.classList.add('fight-fly');
+      }
+    } else {
+      if (atk) atk.remove();
+      if (restoreReal) restoreReal();
+      def.classList.add('fight-fly');
+    }
     setTimeout(() => overlay.remove(), FIGHT_FLY_MS + 80);
   };
 
@@ -539,7 +551,7 @@ function playCaptureAnimation({
     btn.addEventListener('click', () => {
       btn.remove();
       if (onStrike) onStrike();
-      resolve();
+      // Don't auto-resolve — wait for moveMade so we know who died.
     });
     overlay.appendChild(btn);
   } else if (mode === 'wait') {
@@ -552,16 +564,6 @@ function playCaptureAnimation({
 
 
 function setStatus(msg) { statusEl.textContent = msg; }
-
-function renderHistory() {
-  const moves = chess.history();
-  let out = '';
-  for (let i = 0; i < moves.length; i += 2) {
-    const num = (i / 2) + 1;
-    out += `${num}. ${moves[i]}${moves[i + 1] ? ' ' + moves[i + 1] : ''}\n`;
-  }
-  historyEl.textContent = out;
-}
 
 function updateStatus() {
   if (!gameActive) return;
@@ -616,7 +618,6 @@ function onDrop(source, target) {
   if (!move) return 'snapback';
 
   socket.emit('move', { from: source, to: target });
-  renderHistory();
   updateStatus();
 }
 
@@ -646,7 +647,6 @@ function startBoard(fen, color) {
   showSetup(false);
   showStats(true);
   renderStats();
-  renderHistory();
   updateStatus();
 }
 
@@ -669,6 +669,7 @@ function endGame(payload) {
   let msg;
   switch (payload.type) {
     case 'checkmate': msg = `Checkmate. ${payload.winner} wins.`; break;
+    case 'kingDeath': msg = `The king fell in battle. ${payload.winner} wins.`; break;
     case 'resign':    msg = `${payload.winner} wins by resignation.`; break;
     case 'disconnect': msg = `Opponent disconnected. ${payload.winner} wins.`; break;
     case 'agreement': msg = 'Draw by agreement.'; break;
@@ -789,17 +790,21 @@ socket.on('captureWindow', ({ from, to, attackerColor }) => {
   });
 });
 
-socket.on('moveMade', ({ from, to, promotion, fen, pieces }) => {
+socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat }) => {
   if (pieces) currentPieces = pieces;
+  const attackerDied = combat && !combat.attacker_survived;
   if (chess.fen() !== fen) {
-    try {
-      chess.move({ from, to, promotion: promotion || 'q' });
-    } catch (_) {
-      chess.load(fen);
+    if (attackerDied) {
+      try { chess.load(fen); } catch (_) {}
+    } else {
+      try {
+        chess.move({ from, to, promotion: promotion || 'q' });
+      } catch (_) {
+        try { chess.load(fen); } catch (_) {}
+      }
     }
   }
   if (board) board.position(chess.fen());
-  renderHistory();
   renderStats();
   updateStatus();
 
@@ -807,7 +812,7 @@ socket.on('moveMade', ({ from, to, promotion, fen, pieces }) => {
   if (pendingFightResolve) {
     const r = pendingFightResolve;
     pendingFightResolve = null;
-    r();
+    r(attackerDied ? 'attacker' : 'defender');
   }
 });
 

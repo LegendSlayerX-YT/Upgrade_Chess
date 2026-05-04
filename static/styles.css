@@ -64,17 +64,6 @@ button {
   margin-right: 6px;
 }
 button:disabled { opacity: 0.5; cursor: default; }
-#history {
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
-  white-space: pre-wrap;
-  background: #fafafa;
-  border: 1px solid #eee;
-  padding: 8px;
-  border-radius: 4px;
-  max-height: 160px;
-  overflow-y: auto;
-}
 .meta { color: #555; font-size: 13px; }
 
 #waiting {
