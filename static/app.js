@@ -46,7 +46,6 @@ function hidePlayerCards() {
 }
 
 const statusEl = document.getElementById('status');
-const historyEl = document.getElementById('history');
 const findBtn = document.getElementById('findBtn');
 const resignBtn = document.getElementById('resignBtn');
 const drawBtn = document.getElementById('drawBtn');
@@ -105,20 +104,33 @@ promoChoices.addEventListener('click', (e) => {
   if (!btn || !pendingPromotion) return;
   const piece = btn.dataset.piece;
   const { from, to } = pendingPromotion;
+  hidePromotionPicker();
+
+  const legal = chess.moves({ square: from, verbose: true })
+    .find(m => m.to === to && m.promotion === piece);
+  if (!legal) {
+    if (board) board.position(chess.fen());
+    return;
+  }
+
+  if (legal.captured) {
+    awaitingCapture = true;
+    socket.emit('move', { from, to, promotion: piece });
+    return;
+  }
+
   let move;
   try {
     move = chess.move({ from, to, promotion: piece });
   } catch (_) {
     move = null;
   }
-  hidePromotionPicker();
   if (!move) {
     if (board) board.position(chess.fen());
     return;
   }
   socket.emit('move', { from, to, promotion: piece });
   if (board) board.position(chess.fen());
-  renderHistory();
   updateStatus();
 });
 
@@ -147,6 +159,18 @@ const PIECE_BASE = {
   q: { hp: 10, dmg: 10 },
   k: { hp: 10, dmg: 10 },
 };
+const PIECE_LEVEL_MULT = { p: 1, n: 3, b: 3, r: 4, q: 7, k: 1 };
+const HP_TO_DMG_INC_RATIO = 1.5;
+function pieceStats(type, level) {
+  const base = PIECE_BASE[type];
+  const mult = PIECE_LEVEL_MULT[type];
+  const incDmg = base.dmg * mult;
+  const incHp = Math.floor(incDmg * HP_TO_DMG_INC_RATIO);
+  return {
+    hp: base.hp + (level - 1) * incHp,
+    dmg: base.dmg + (level - 1) * incDmg,
+  };
+}
 const SLOT_DEFS = [
   { slot: 'Ra', type: 'r', file: 'a' },
   { slot: 'Nb', type: 'n', file: 'b' },
@@ -224,9 +248,10 @@ function buildPreviewPieces() {
     const bSq = wSq[0] + (wSq[1] === '1' ? '8' : '7');
     const wLvl = clampLevel(myLevels.w[slot] ?? 1);
     const bLvl = clampLevel(myLevels.b[slot] ?? 1);
-    const base = PIECE_BASE[type];
-    pieces[wSq] = { id: 'w'+slot, type, color: 'w', level: wLvl, hp: base.hp*wLvl, dmg: base.dmg*wLvl };
-    pieces[bSq] = { id: 'b'+slot, type, color: 'b', level: bLvl, hp: base.hp*bLvl, dmg: base.dmg*bLvl };
+    const wStats = pieceStats(type, wLvl);
+    const bStats = pieceStats(type, bLvl);
+    pieces[wSq] = { id: 'w'+slot, type, color: 'w', level: wLvl, hp: wStats.hp, dmg: wStats.dmg };
+    pieces[bSq] = { id: 'b'+slot, type, color: 'b', level: bLvl, hp: bStats.hp, dmg: bStats.dmg };
   }
   return pieces;
 }
@@ -249,11 +274,14 @@ function renderSetup() {
     : (type === 'p' ? '7' : '8');
   setupGrid.innerHTML = ordered.map(({ slot, type, file }) => {
     const label = file + rankFor(type);
+    const isKing = type === 'k';
+    if (isKing) sideLevels[slot] = 1;
+    const inputAttrs = isKing ? 'disabled title="The king cannot be upgraded."' : '';
     return `
-      <div class="setup-cell">
+      <div class="setup-cell${isKing ? ' locked' : ''}">
         <img src="/static/img/chesspieces/wikipedia/${activeSide}${TYPE_NAME[type]}.png" alt="${type}" />
         <div class="slot-label">${label}</div>
-        <input type="number" min="1" max="99" data-slot="${slot}" value="${sideLevels[slot] ?? 1}" />
+        <input type="number" min="1" max="99" data-slot="${slot}" value="${sideLevels[slot] ?? 1}" ${inputAttrs} />
       </div>
     `;
   }).join('');
@@ -394,17 +422,173 @@ function renderStats() {
   `).join('');
 }
 
-function setStatus(msg) { statusEl.textContent = msg; }
+const PIECE_IMG = (color, type) => `/static/img/chesspieces/wikipedia/${color}${TYPE_NAME[type]}.png`;
 
-function renderHistory() {
-  const moves = chess.history();
-  let out = '';
-  for (let i = 0; i < moves.length; i += 2) {
-    const num = (i / 2) + 1;
-    out += `${num}. ${moves[i]}${moves[i + 1] ? ' ' + moves[i + 1] : ''}\n`;
-  }
-  historyEl.textContent = out;
+function getSquareEl(square) {
+  return boardEl.querySelector(`.square-${square}`)
+      || boardEl.querySelector(`[data-square="${square}"]`);
 }
+
+const FIGHT_CLASH_MS = 500;
+const FIGHT_FLY_MS = 850;
+
+function hideRealPieceAt(square) {
+  let restored = false;
+  let pieceEl = null;
+  let intervalId = null;
+  let attempts = 0;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    if (pieceEl) pieceEl.style.visibility = '';
+  };
+  const tryHide = () => {
+    if (restored || pieceEl) return;
+    const sq = getSquareEl(square);
+    const found = sq && sq.querySelector('img');
+    if (found) {
+      pieceEl = found;
+      pieceEl.style.visibility = 'hidden';
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    } else if (++attempts >= 30) {
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    }
+  };
+  tryHide();
+  if (!pieceEl) intervalId = setInterval(tryHide, 40);
+  return restore;
+}
+
+let currentDuel = null;
+let awaitingCapture = false;
+
+function playCaptureAnimation({
+  capturedSquare, attackerSquare, isEnPassant,
+  attackerType, attackerColor, defenderType, defenderColor,
+  attackerHp, defenderHp, initialTurn, localRole, onStrike,
+}) {
+  const sqEl = getSquareEl(capturedSquare);
+  if (!sqEl) return null;
+  const rect = sqEl.getBoundingClientRect();
+  const size = rect.width;
+  if (!size) return null;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'fight-overlay' + (isEnPassant ? ' fight-overlay--solo' : '');
+  overlay.style.left = rect.left + 'px';
+  overlay.style.top = rect.top + 'px';
+  overlay.style.width = size + 'px';
+  overlay.style.height = size + 'px';
+
+  const flash = document.createElement('div');
+  flash.className = 'fight-flash';
+  overlay.appendChild(flash);
+
+  let atk = null;
+  let atkHpEl = null;
+  if (!isEnPassant && attackerType && attackerColor) {
+    atk = document.createElement('img');
+    atk.src = PIECE_IMG(attackerColor, attackerType);
+    atk.alt = '';
+    atk.draggable = false;
+    atk.className = 'fight-attacker';
+    overlay.appendChild(atk);
+
+    atkHpEl = document.createElement('div');
+    atkHpEl.className = 'fight-hp fight-hp--attacker';
+    atkHpEl.textContent = attackerHp;
+    overlay.appendChild(atkHpEl);
+  }
+
+  const def = document.createElement('img');
+  def.src = PIECE_IMG(defenderColor, defenderType);
+  def.alt = '';
+  def.draggable = false;
+  def.className = 'fight-defender';
+
+  const sign = Math.random() < 0.5 ? -1 : 1;
+  const dx = sign * (size * 4 + Math.random() * size * 3);
+  const dy = -size * 3 - Math.random() * size * 3;
+  const rot = Math.random() * 720 - 360;
+  def.style.setProperty('--fly-x', dx + 'px');
+  def.style.setProperty('--fly-y', dy + 'px');
+  def.style.setProperty('--fly-rot', rot + 'deg');
+
+  overlay.appendChild(def);
+
+  const defHpEl = document.createElement('div');
+  defHpEl.className = 'fight-hp fight-hp--defender';
+  defHpEl.textContent = defenderHp;
+  overlay.appendChild(defHpEl);
+
+  const btn = document.createElement('button');
+  btn.className = 'fight-resolve-btn';
+  btn.type = 'button';
+  btn.textContent = 'Strike!';
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    if (onStrike) onStrike();
+  });
+  overlay.appendChild(btn);
+
+  const waitingLabel = document.createElement('div');
+  waitingLabel.className = 'fight-waiting';
+  waitingLabel.textContent = 'Waiting…';
+  overlay.appendChild(waitingLabel);
+
+  document.body.appendChild(overlay);
+
+  let restoreReal = null;
+  if (!isEnPassant && attackerSquare) {
+    restoreReal = hideRealPieceAt(attackerSquare);
+  }
+
+  const update = ({ attackerHp: aHp, defenderHp: dHp, turn }) => {
+    if (atkHpEl && aHp != null) atkHpEl.textContent = aHp;
+    if (dHp != null) defHpEl.textContent = dHp;
+    const myTurn = turn === localRole;
+    btn.style.display = myTurn ? '' : 'none';
+    btn.disabled = !myTurn;
+    waitingLabel.style.display = myTurn ? 'none' : '';
+  };
+  update({ attackerHp, defenderHp, turn: initialTurn });
+
+  let resolved = false;
+  const resolve = (loser = 'defender') => {
+    if (resolved) return;
+    resolved = true;
+    btn.remove();
+    waitingLabel.remove();
+    if (loser === 'attacker') {
+      def.style.visibility = 'hidden';
+      if (defHpEl) defHpEl.style.visibility = 'hidden';
+      if (atk) {
+        const sign2 = Math.random() < 0.5 ? -1 : 1;
+        const dx2 = sign2 * (size * 4 + Math.random() * size * 3);
+        const dy2 = -size * 3 - Math.random() * size * 3;
+        const rot2 = Math.random() * 720 - 360;
+        atk.style.setProperty('--fly-x', dx2 + 'px');
+        atk.style.setProperty('--fly-y', dy2 + 'px');
+        atk.style.setProperty('--fly-rot', rot2 + 'deg');
+        atk.classList.add('fight-fly');
+      }
+      if (atkHpEl) atkHpEl.remove();
+    } else {
+      if (atk) atk.remove();
+      if (atkHpEl) atkHpEl.remove();
+      if (restoreReal) restoreReal();
+      def.classList.add('fight-fly');
+      if (defHpEl) defHpEl.remove();
+    }
+    setTimeout(() => overlay.remove(), FIGHT_FLY_MS + 80);
+  };
+
+  return { resolve, update };
+}
+
+
+function setStatus(msg) { statusEl.textContent = msg; }
 
 function updateStatus() {
   if (!gameActive) return;
@@ -418,6 +602,7 @@ function updateStatus() {
 function onDragStart(_source, piece) {
   if (!gameActive) return false;
   if (chess.isGameOver()) return false;
+  if (awaitingCapture) return false;
   if ((myColor === 'w' && piece.startsWith('b')) ||
       (myColor === 'b' && piece.startsWith('w'))) return false;
   if (chess.turn() !== myColor) return false;
@@ -439,6 +624,28 @@ function onDrop(source, target) {
     return;
   }
 
+  const targetPiece = currentPieces[target];
+  const moverPiece = currentPieces[source];
+  const isKingAttack = !!(
+    targetPiece && moverPiece &&
+    targetPiece.type === 'k' && targetPiece.color !== moverPiece.color
+  );
+
+  const legal = chess.moves({ square: source, verbose: true })
+    .find(m => m.to === target);
+  if (!legal && !isKingAttack) return 'snapback';
+  if (isKingAttack) {
+    awaitingCapture = true;
+    socket.emit('move', { from: source, to: target });
+    return 'snapback';
+  }
+
+  if (legal.captured) {
+    awaitingCapture = true;
+    socket.emit('move', { from: source, to: target });
+    return;
+  }
+
   let move;
   try {
     move = chess.move({ from: source, to: target, promotion: 'q' });
@@ -448,7 +655,6 @@ function onDrop(source, target) {
   if (!move) return 'snapback';
 
   socket.emit('move', { from: source, to: target });
-  renderHistory();
   updateStatus();
 }
 
@@ -478,7 +684,6 @@ function startBoard(fen, color) {
   showSetup(false);
   showStats(true);
   renderStats();
-  renderHistory();
   updateStatus();
 }
 
@@ -501,6 +706,7 @@ function endGame(payload) {
   let msg;
   switch (payload.type) {
     case 'checkmate': msg = `Checkmate. ${payload.winner} wins.`; break;
+    case 'kingDeath': msg = `The king fell in battle. ${payload.winner} wins.`; break;
     case 'resign':    msg = `${payload.winner} wins by resignation.`; break;
     case 'disconnect': msg = `Opponent disconnected. ${payload.winner} wins.`; break;
     case 'agreement': msg = 'Draw by agreement.'; break;
@@ -584,23 +790,78 @@ socket.on('paired', ({ gameId, color, fen, pieces, you, opponent, yourPicture, o
   startBoard(fen, color);
 });
 
-socket.on('moveMade', ({ from, to, promotion, fen, pieces }) => {
+socket.on('captureWindow', ({
+  from, to, attackerColor, defenderSquare,
+  attackerHp, defenderHp, turn,
+}) => {
+  const localIsAttacker = attackerColor === myColor;
+
+  // Opponent's chessboard hasn't moved the attacker yet; do a visual-only move.
+  if (!localIsAttacker && board) {
+    board.move(`${from}-${to}`);
+  }
+
+  const mover = currentPieces[from];
+  const capturedSquare = defenderSquare || to;
+  const isEP = capturedSquare !== to;
+  const defender = currentPieces[capturedSquare];
+  if (!mover || !defender) return;
+
+  if (currentDuel) {
+    const prev = currentDuel;
+    currentDuel = null;
+    prev.resolve();
+  }
+  currentDuel = playCaptureAnimation({
+    capturedSquare,
+    attackerSquare: to,
+    isEnPassant: isEP,
+    attackerType: mover.type,
+    attackerColor: mover.color,
+    defenderType: defender.type,
+    defenderColor: defender.color,
+    attackerHp,
+    defenderHp,
+    initialTurn: turn || 'attacker',
+    localRole: localIsAttacker ? 'attacker' : 'defender',
+    onStrike: () => socket.emit('duelStrike'),
+  });
+});
+
+socket.on('duelUpdate', ({ attackerHp, defenderHp, turn }) => {
+  if (currentDuel) currentDuel.update({ attackerHp, defenderHp, turn });
+});
+
+socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat }) => {
   if (pieces) currentPieces = pieces;
+  const attackerDied = combat && !combat.attacker_survived;
   if (chess.fen() !== fen) {
-    try {
-      chess.move({ from, to, promotion: promotion || 'q' });
-    } catch (_) {
-      chess.load(fen);
+    if (attackerDied) {
+      try { chess.load(fen); } catch (_) {}
+    } else {
+      try {
+        chess.move({ from, to, promotion: promotion || 'q' });
+      } catch (_) {
+        try { chess.load(fen); } catch (_) {}
+      }
     }
   }
   if (board) board.position(chess.fen());
-  renderHistory();
   renderStats();
   updateStatus();
+
+  awaitingCapture = false;
+  if (currentDuel) {
+    const d = currentDuel;
+    currentDuel = null;
+    d.resolve(attackerDied ? 'attacker' : 'defender');
+  }
 });
 
 socket.on('illegalMove', ({ reason }) => {
   setStatus(`Move rejected: ${reason}`);
+  awaitingCapture = false;
+  if (board) board.position(chess.fen());
 });
 
 socket.on('drawOfferSent', () => {

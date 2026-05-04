@@ -27,8 +27,10 @@ PIECE_BASE = {
     "b": {"hp": 10, "dmg": 10},
     "r": {"hp": 10, "dmg": 10},
     "q": {"hp": 10, "dmg": 10},
-    "k": {"hp": 10, "dmg": 10},
+    "k": {"hp": 10, "dmg": 1000000},
 }
+
+PIECE_LEVEL_MULT = {"p": 1, "n": 3, "b": 3, "r": 4, "q": 7, "k": 1}
 
 SLOT_TO_START_SQUARE = {
     "Ra": "a1", "Nb": "b1", "Bc": "c1", "Q": "d1", "K": "e1",
@@ -74,9 +76,17 @@ def clamp_level(n):
         return 99
     return v
 
+HP_TO_DMG_INC_RATIO = 1.5
+
 def piece_stats(piece_type, level):
     base = PIECE_BASE[piece_type]
-    return {"hp": base["hp"] * level, "dmg": base["dmg"] * level}
+    mult = PIECE_LEVEL_MULT[piece_type]
+    inc_dmg = base["dmg"] * mult
+    inc_hp = int(inc_dmg * HP_TO_DMG_INC_RATIO)
+    return {
+        "hp": base["hp"] + (level - 1) * inc_hp,
+        "dmg": base["dmg"] + (level - 1) * inc_dmg,
+    }
 
 def build_pieces(white_levels, black_levels):
     pieces = {}
@@ -84,8 +94,12 @@ def build_pieces(white_levels, black_levels):
         piece_type = SLOT_TYPES[slot]
         b_square = w_square[0] + ("8" if w_square[1] == "1" else "7")
 
-        w_level = clamp_level((white_levels or {}).get(slot, 1))
-        b_level = clamp_level((black_levels or {}).get(slot, 1))
+        if piece_type == "k":
+            w_level = 1
+            b_level = 1
+        else:
+            w_level = clamp_level((white_levels or {}).get(slot, 1))
+            b_level = clamp_level((black_levels or {}).get(slot, 1))
         w_stats = piece_stats(piece_type, w_level)
         b_stats = piece_stats(piece_type, b_level)
 
@@ -99,18 +113,70 @@ def build_pieces(white_levels, black_levels):
         }
     return pieces
 
-def apply_move_to_pieces(pieces, move_info):
+def can_attack_king(board, candidate, target_sq):
+    target = board.piece_at(target_sq)
+    if not target or target.piece_type != chess.KING:
+        return False
+    board.set_piece_at(target_sq, chess.Piece(chess.QUEEN, target.color))
+    legal = candidate in board.legal_moves
+    board.set_piece_at(target_sq, target)
+    return legal
+
+def resolve_combat(attacker, defender):
+    a_hp, d_hp = attacker["hp"], defender["hp"]
+    a_dmg, d_dmg = attacker["dmg"], defender["dmg"]
+    log = []
+    safety = 0
+    while a_hp > 0 and d_hp > 0 and safety < 1000:
+        d_hp -= a_dmg
+        log.append({"by": "attacker", "atk_hp": a_hp, "def_hp": max(d_hp, 0)})
+        if d_hp <= 0:
+            break
+        a_hp -= d_dmg
+        log.append({"by": "defender", "atk_hp": max(a_hp, 0), "def_hp": d_hp})
+        safety += 1
+    return {
+        "attacker_survived": a_hp > 0,
+        "defender_survived": d_hp > 0,
+        "attacker_hp": max(a_hp, 0),
+        "defender_hp": max(d_hp, 0),
+        "log": log,
+    }
+
+def apply_move_to_pieces(pieces, move_info, combat_result=None):
     nxt = dict(pieces)
     mover = nxt.get(move_info["from"])
     if not mover:
         return nxt
-    del nxt[move_info["from"]]
 
-    if move_info["is_en_passant"]:
-        ep_rank = "5" if move_info["color"] == "w" else "4"
-        nxt.pop(move_info["to"][0] + ep_rank, None)
-    elif move_info["is_capture"]:
-        nxt.pop(move_info["to"], None)
+    if move_info["is_capture"] and combat_result:
+        if move_info["is_en_passant"]:
+            ep_rank = "5" if move_info["color"] == "w" else "4"
+            defender_sq = move_info["to"][0] + ep_rank
+        else:
+            defender_sq = move_info["to"]
+
+        del nxt[move_info["from"]]
+        if combat_result["attacker_survived"]:
+            nxt.pop(defender_sq, None)
+            survivor = dict(mover)
+            survivor["hp"] = combat_result["attacker_hp"]
+            if move_info["promotion"]:
+                new_type = move_info["promotion"]
+                stats = piece_stats(new_type, survivor["level"])
+                survivor["type"] = new_type
+                survivor["hp"] = stats["hp"]
+                survivor["dmg"] = stats["dmg"]
+            nxt[move_info["to"]] = survivor
+        else:
+            defender = pieces.get(defender_sq)
+            if defender:
+                survivor = dict(defender)
+                survivor["hp"] = combat_result["defender_hp"]
+                nxt[defender_sq] = survivor
+        return nxt
+
+    del nxt[move_info["from"]]
 
     if move_info["is_castle"]:
         rank = "1" if move_info["color"] == "w" else "8"
@@ -139,8 +205,12 @@ def make_game_id():
 def start_game(white_sid, black_sid):
     game_id = make_game_id()
     board = chess.Board()
-    white_side = (pending_levels.get(white_sid) or {}).get("w", {})
-    black_side = (pending_levels.get(black_sid) or {}).get("b", {})
+    saved_levels = {
+        white_sid: pending_levels.get(white_sid) or {"w": {}, "b": {}},
+        black_sid: pending_levels.get(black_sid) or {"w": {}, "b": {}},
+    }
+    white_side = saved_levels[white_sid].get("w", {})
+    black_side = saved_levels[black_sid].get("b", {})
     pending_levels.pop(white_sid, None)
     pending_levels.pop(black_sid, None)
     pieces = build_pieces(white_side, black_side)
@@ -153,6 +223,8 @@ def start_game(white_sid, black_sid):
         "draw_offer_by": None,
         "state": "active",
         "rematch_requests": set(),
+        "pending_capture": None,
+        "levels_by_sid": saved_levels,
     }
     sid_to_game[white_sid] = game_id
     sid_to_game[black_sid] = game_id
@@ -275,6 +347,120 @@ def on_find_game(payload):
         leave_ended_game(sid)
         pair(sid)
 
+def commit_move(game, candidate, move_info, san, player_color, combat_result=None):
+    game_id = game["id"]
+    board = game["board"]
+
+    san_used = san
+    attacker_piece = game["pieces"].get(move_info["from"])
+
+    if move_info["is_capture"] and attacker_piece and combat_result is None:
+        if move_info["is_en_passant"]:
+            ep_rank = "5" if move_info["color"] == "w" else "4"
+            defender_sq_alg = move_info["to"][0] + ep_rank
+        else:
+            defender_sq_alg = move_info["to"]
+        defender_piece = game["pieces"].get(defender_sq_alg)
+        if defender_piece:
+            combat_result = resolve_combat(attacker_piece, defender_piece)
+
+    attacker_died = bool(combat_result and not combat_result["attacker_survived"])
+    is_king_attack = bool(move_info.get("is_king_attack"))
+    king_died_attacker = attacker_died and attacker_piece and attacker_piece["type"] == "k"
+
+    defender_piece_pre = None
+    if move_info["is_capture"]:
+        if move_info["is_en_passant"]:
+            ep_rank = "5" if move_info["color"] == "w" else "4"
+            defender_sq_pre = move_info["to"][0] + ep_rank
+        else:
+            defender_sq_pre = move_info["to"]
+        defender_piece_pre = game["pieces"].get(defender_sq_pre)
+    defender_king_died = (
+        combat_result is not None
+        and not combat_result["defender_survived"]
+        and defender_piece_pre is not None
+        and defender_piece_pre["type"] == "k"
+    )
+
+    if is_king_attack:
+        from_sq = chess.parse_square(move_info["from"])
+        to_sq = chess.parse_square(move_info["to"])
+        attacker_chess_piece = board.piece_at(from_sq)
+        if combat_result and combat_result["attacker_survived"]:
+            board.remove_piece_at(from_sq)
+            if move_info["promotion"] and attacker_chess_piece:
+                promo_chess_type = PROMO_LETTER_TO_PIECE[move_info["promotion"]]
+                board.set_piece_at(to_sq, chess.Piece(promo_chess_type, attacker_chess_piece.color))
+            elif attacker_chess_piece:
+                board.set_piece_at(to_sq, attacker_chess_piece)
+        else:
+            board.remove_piece_at(from_sq)
+        board.turn = not board.turn
+        board.ep_square = None
+        board.halfmove_clock = 0
+        if move_info["color"] == "b":
+            board.fullmove_number += 1
+        board.clear_stack()
+        san_used = f"{move_info['from']}x{move_info['to']}†"
+    elif attacker_died:
+        from_sq = chess.parse_square(move_info["from"])
+        board.remove_piece_at(from_sq)
+        board.turn = not board.turn
+        board.ep_square = None
+        board.halfmove_clock = 0
+        if move_info["color"] == "b":
+            board.fullmove_number += 1
+        board.clear_stack()
+        san_used = f"{move_info['from']}x{move_info['to']}†"
+    else:
+        board.push(candidate)
+
+    game["pieces"] = apply_move_to_pieces(game["pieces"], move_info, combat_result)
+
+    if game["draw_offer_by"]:
+        game["draw_offer_by"] = None
+        socketio.emit("drawOfferCleared", to=game_id)
+
+    socketio.emit(
+        "moveMade",
+        {
+            "from": move_info["from"],
+            "to": move_info["to"],
+            "promotion": move_info["promotion"],
+            "san": san_used,
+            "fen": board.fen(),
+            "turn": "w" if board.turn == chess.WHITE else "b",
+            "pieces": game["pieces"],
+            "combat": combat_result,
+        },
+        to=game_id,
+    )
+
+    if king_died_attacker:
+        winner = "white" if attacker_piece["color"] == "b" else "black"
+        end_game(game_id, {"type": "kingDeath", "winner": winner})
+        return
+
+    if defender_king_died:
+        end_game(game_id, {"type": "kingDeath", "winner": player_color})
+        return
+
+    if board.is_game_over(claim_draw=True):
+        if board.is_checkmate():
+            outcome = {"type": "checkmate", "winner": player_color}
+        elif board.is_stalemate():
+            outcome = {"type": "stalemate"}
+        elif board.is_repetition(3) or board.can_claim_threefold_repetition():
+            outcome = {"type": "threefold"}
+        elif board.is_insufficient_material():
+            outcome = {"type": "insufficient"}
+        elif board.can_claim_draw():
+            outcome = {"type": "draw"}
+        else:
+            outcome = {"type": "over"}
+        end_game(game_id, outcome)
+
 @socketio.on("move")
 def on_move(payload):
     from flask import request
@@ -283,6 +469,9 @@ def on_move(payload):
         game_id = sid_to_game.get(sid)
         game = games.get(game_id) if game_id else None
         if not game or game["state"] != "active":
+            return
+        if game.get("pending_capture"):
+            emit("illegalMove", {"reason": "capture pending"})
             return
         board = game["board"]
         turn_color = "white" if board.turn == chess.WHITE else "black"
@@ -303,23 +492,34 @@ def on_move(payload):
 
         promo_piece = PROMO_LETTER_TO_PIECE.get(promo_letter, chess.QUEEN)
         candidate = chess.Move(from_sq, to_sq, promotion=promo_piece)
+        is_king_attack = False
         if candidate not in board.legal_moves:
             plain = chess.Move(from_sq, to_sq)
             if plain in board.legal_moves:
                 candidate = plain
+            elif can_attack_king(board, candidate, to_sq):
+                is_king_attack = True
+            elif can_attack_king(board, plain, to_sq):
+                candidate = plain
+                is_king_attack = True
             else:
                 emit("illegalMove", {"reason": "illegal"})
                 return
 
-        is_en_passant = board.is_en_passant(candidate)
-        is_capture = board.is_capture(candidate)
-        is_castle = board.is_castling(candidate)
-        is_kingside = board.is_kingside_castling(candidate)
-        san = board.san(candidate)
+        if is_king_attack:
+            is_en_passant = False
+            is_capture = True
+            is_castle = False
+            is_kingside = False
+            san = f"{from_alg}x{to_alg}"
+        else:
+            is_en_passant = board.is_en_passant(candidate)
+            is_capture = board.is_capture(candidate)
+            is_castle = board.is_castling(candidate)
+            is_kingside = board.is_kingside_castling(candidate)
+            san = board.san(candidate)
         mover_color = "w" if board.turn == chess.WHITE else "b"
         promotion_letter = chess.piece_symbol(candidate.promotion) if candidate.promotion else None
-
-        board.push(candidate)
 
         move_info = {
             "from": from_alg,
@@ -329,42 +529,61 @@ def on_move(payload):
             "is_capture": is_capture,
             "is_castle": is_castle,
             "is_kingside": is_kingside,
+            "is_king_attack": is_king_attack,
             "promotion": promotion_letter,
         }
-        game["pieces"] = apply_move_to_pieces(game["pieces"], move_info)
 
-        if game["draw_offer_by"]:
-            game["draw_offer_by"] = None
-            socketio.emit("drawOfferCleared", to=game_id)
-
-        socketio.emit(
-            "moveMade",
-            {
-                "from": from_alg,
-                "to": to_alg,
-                "promotion": promotion_letter,
-                "san": san,
-                "fen": board.fen(),
-                "turn": "w" if board.turn == chess.WHITE else "b",
-                "pieces": game["pieces"],
-            },
-            to=game_id,
-        )
-
-        if board.is_game_over(claim_draw=True):
-            if board.is_checkmate():
-                outcome = {"type": "checkmate", "winner": player_color}
-            elif board.is_stalemate():
-                outcome = {"type": "stalemate"}
-            elif board.is_repetition(3) or board.can_claim_threefold_repetition():
-                outcome = {"type": "threefold"}
-            elif board.is_insufficient_material():
-                outcome = {"type": "insufficient"}
-            elif board.can_claim_draw():
-                outcome = {"type": "draw"}
+        if is_capture:
+            attacker_piece = game["pieces"].get(from_alg)
+            if is_en_passant:
+                ep_rank = "5" if mover_color == "w" else "4"
+                defender_sq_alg = to_alg[0] + ep_rank
             else:
-                outcome = {"type": "over"}
-            end_game(game_id, outcome)
+                defender_sq_alg = to_alg
+            defender_piece = game["pieces"].get(defender_sq_alg)
+
+            if not attacker_piece or not defender_piece:
+                commit_move(game, candidate, move_info, san, player_color)
+                return
+
+            defender_color = "b" if mover_color == "w" else "w"
+            defender_sid = game["black"] if defender_color == "b" else game["white"]
+            game["pending_capture"] = {
+                "attacker_sid": sid,
+                "defender_sid": defender_sid,
+                "candidate": candidate,
+                "move_info": move_info,
+                "san": san,
+                "player_color": player_color,
+                "attacker_color": mover_color,
+                "defender_color": defender_color,
+                "defender_square": defender_sq_alg,
+                "attacker_hp": attacker_piece["hp"],
+                "defender_hp": defender_piece["hp"],
+                "attacker_dmg": attacker_piece["dmg"],
+                "defender_dmg": defender_piece["dmg"],
+                "turn": "attacker",
+            }
+            socketio.emit(
+                "captureWindow",
+                {
+                    "from": from_alg,
+                    "to": to_alg,
+                    "promotion": promotion_letter,
+                    "attackerColor": mover_color,
+                    "defenderColor": defender_color,
+                    "defenderSquare": defender_sq_alg,
+                    "attackerHp": attacker_piece["hp"],
+                    "defenderHp": defender_piece["hp"],
+                    "attackerDmg": attacker_piece["dmg"],
+                    "defenderDmg": defender_piece["dmg"],
+                    "turn": "attacker",
+                },
+                to=game_id,
+            )
+            return
+
+        commit_move(game, candidate, move_info, san, player_color)
 
 @socketio.on("offerDraw")
 def on_offer_draw():
@@ -417,6 +636,61 @@ def on_decline_draw():
         game["draw_offer_by"] = None
         socketio.emit("drawDeclined", to=game_id)
 
+@socketio.on("duelStrike")
+def on_duel_strike():
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        game_id = sid_to_game.get(sid)
+        game = games.get(game_id) if game_id else None
+        if not game or game["state"] != "active":
+            return
+        pending = game.get("pending_capture")
+        if not pending:
+            return
+
+        if pending["turn"] == "attacker":
+            if pending["attacker_sid"] != sid:
+                return
+            pending["defender_hp"] = max(pending["defender_hp"] - pending["attacker_dmg"], 0)
+        else:
+            if pending["defender_sid"] != sid:
+                return
+            pending["attacker_hp"] = max(pending["attacker_hp"] - pending["defender_dmg"], 0)
+
+        attacker_alive = pending["attacker_hp"] > 0
+        defender_alive = pending["defender_hp"] > 0
+
+        if not attacker_alive or not defender_alive:
+            combat_result = {
+                "attacker_survived": attacker_alive,
+                "defender_survived": defender_alive,
+                "attacker_hp": pending["attacker_hp"],
+                "defender_hp": pending["defender_hp"],
+                "log": [],
+            }
+            game["pending_capture"] = None
+            commit_move(
+                game,
+                pending["candidate"],
+                pending["move_info"],
+                pending["san"],
+                pending["player_color"],
+                combat_result=combat_result,
+            )
+            return
+
+        pending["turn"] = "defender" if pending["turn"] == "attacker" else "attacker"
+        socketio.emit(
+            "duelUpdate",
+            {
+                "attackerHp": pending["attacker_hp"],
+                "defenderHp": pending["defender_hp"],
+                "turn": pending["turn"],
+            },
+            to=game_id,
+        )
+
 @socketio.on("resign")
 def on_resign():
     from flask import request
@@ -453,6 +727,10 @@ def on_request_rematch():
         if opponent_sid in game["rematch_requests"]:
             new_white = game["black"]
             new_black = game["white"]
+            saved = game.get("levels_by_sid") or {}
+            for s in (new_white, new_black):
+                if s in saved:
+                    pending_levels[s] = saved[s]
             sid_to_game.pop(game["white"], None)
             sid_to_game.pop(game["black"], None)
             socketio.server.leave_room(new_white, game_id, namespace="/")
