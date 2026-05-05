@@ -433,6 +433,7 @@ def commit_move(game, candidate, move_info, san, player_color, combat_result=Non
             "turn": "w" if board.turn == chess.WHITE else "b",
             "pieces": game["pieces"],
             "combat": combat_result,
+            "is_en_passant": move_info.get("is_en_passant", False),
         },
         to=game_id,
     )
@@ -534,12 +535,20 @@ def on_move(payload):
         }
 
         if is_capture:
-            attacker_piece = game["pieces"].get(from_alg)
             if is_en_passant:
-                ep_rank = "5" if mover_color == "w" else "4"
-                defender_sq_alg = to_alg[0] + ep_rank
-            else:
-                defender_sq_alg = to_alg
+                attacker_piece = game["pieces"].get(from_alg)
+                guaranteed = {
+                    "attacker_survived": True,
+                    "defender_survived": False,
+                    "attacker_hp": attacker_piece["hp"] if attacker_piece else 0,
+                    "defender_hp": 0,
+                    "log": [],
+                }
+                commit_move(game, candidate, move_info, san, player_color, combat_result=guaranteed)
+                return
+
+            attacker_piece = game["pieces"].get(from_alg)
+            defender_sq_alg = to_alg
             defender_piece = game["pieces"].get(defender_sq_alg)
 
             if not attacker_piece or not defender_piece:

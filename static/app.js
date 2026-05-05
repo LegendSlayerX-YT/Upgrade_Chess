@@ -832,7 +832,20 @@ socket.on('duelUpdate', ({ attackerHp, defenderHp, turn }) => {
   if (currentDuel) currentDuel.update({ attackerHp, defenderHp, turn });
 });
 
-socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat }) => {
+let enPassantToastTimer = null;
+function showEnPassantToast() {
+  const el = document.getElementById('enPassantToast');
+  if (!el) return;
+  el.classList.add('on');
+  if (enPassantToastTimer) clearTimeout(enPassantToastTimer);
+  enPassantToastTimer = setTimeout(() => {
+    el.classList.remove('on');
+    enPassantToastTimer = null;
+  }, 6000);
+}
+
+socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant }) => {
+  if (is_en_passant) showEnPassantToast();
   if (pieces) currentPieces = pieces;
   const attackerDied = combat && !combat.attacker_survived;
   if (chess.fen() !== fen) {
