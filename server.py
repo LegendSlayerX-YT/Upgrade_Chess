@@ -535,20 +535,12 @@ def on_move(payload):
         }
 
         if is_capture:
-            if is_en_passant:
-                attacker_piece = game["pieces"].get(from_alg)
-                guaranteed = {
-                    "attacker_survived": True,
-                    "defender_survived": False,
-                    "attacker_hp": attacker_piece["hp"] if attacker_piece else 0,
-                    "defender_hp": 0,
-                    "log": [],
-                }
-                commit_move(game, candidate, move_info, san, player_color, combat_result=guaranteed)
-                return
-
             attacker_piece = game["pieces"].get(from_alg)
-            defender_sq_alg = to_alg
+            if is_en_passant:
+                ep_rank = "5" if mover_color == "w" else "4"
+                defender_sq_alg = to_alg[0] + ep_rank
+            else:
+                defender_sq_alg = to_alg
             defender_piece = game["pieces"].get(defender_sq_alg)
 
             if not attacker_piece or not defender_piece:
@@ -661,7 +653,10 @@ def on_duel_strike():
         if pending["turn"] == "attacker":
             if pending["attacker_sid"] != sid:
                 return
-            pending["defender_hp"] = max(pending["defender_hp"] - pending["attacker_dmg"], 0)
+            if pending["move_info"].get("is_en_passant"):
+                pending["defender_hp"] = 0
+            else:
+                pending["defender_hp"] = max(pending["defender_hp"] - pending["attacker_dmg"], 0)
         else:
             if pending["defender_sid"] != sid:
                 return

@@ -475,7 +475,7 @@ function playCaptureAnimation({
   if (!size) return null;
 
   const overlay = document.createElement('div');
-  overlay.className = 'fight-overlay' + (isEnPassant ? ' fight-overlay--solo' : '');
+  overlay.className = 'fight-overlay';
   overlay.style.left = rect.left + 'px';
   overlay.style.top = rect.top + 'px';
   overlay.style.width = size + 'px';
@@ -487,7 +487,7 @@ function playCaptureAnimation({
 
   let atk = null;
   let atkHpEl = null;
-  if (!isEnPassant && attackerType && attackerColor) {
+  if (attackerType && attackerColor) {
     atk = document.createElement('img');
     atk.src = PIECE_IMG(attackerColor, attackerType);
     atk.alt = '';
