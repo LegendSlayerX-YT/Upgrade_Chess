@@ -433,6 +433,7 @@ def commit_move(game, candidate, move_info, san, player_color, combat_result=Non
             "turn": "w" if board.turn == chess.WHITE else "b",
             "pieces": game["pieces"],
             "combat": combat_result,
+            "is_en_passant": move_info.get("is_en_passant", False),
         },
         to=game_id,
     )
@@ -652,7 +653,10 @@ def on_duel_strike():
         if pending["turn"] == "attacker":
             if pending["attacker_sid"] != sid:
                 return
-            pending["defender_hp"] = max(pending["defender_hp"] - pending["attacker_dmg"], 0)
+            if pending["move_info"].get("is_en_passant"):
+                pending["defender_hp"] = 0
+            else:
+                pending["defender_hp"] = max(pending["defender_hp"] - pending["attacker_dmg"], 0)
         else:
             if pending["defender_sid"] != sid:
                 return

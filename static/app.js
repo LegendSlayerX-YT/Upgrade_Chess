@@ -475,7 +475,7 @@ function playCaptureAnimation({
   if (!size) return null;
 
   const overlay = document.createElement('div');
-  overlay.className = 'fight-overlay' + (isEnPassant ? ' fight-overlay--solo' : '');
+  overlay.className = 'fight-overlay';
   overlay.style.left = rect.left + 'px';
   overlay.style.top = rect.top + 'px';
   overlay.style.width = size + 'px';
@@ -487,7 +487,7 @@ function playCaptureAnimation({
 
   let atk = null;
   let atkHpEl = null;
-  if (!isEnPassant && attackerType && attackerColor) {
+  if (attackerType && attackerColor) {
     atk = document.createElement('img');
     atk.src = PIECE_IMG(attackerColor, attackerType);
     atk.alt = '';
@@ -832,7 +832,20 @@ socket.on('duelUpdate', ({ attackerHp, defenderHp, turn }) => {
   if (currentDuel) currentDuel.update({ attackerHp, defenderHp, turn });
 });
 
-socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat }) => {
+let enPassantToastTimer = null;
+function showEnPassantToast() {
+  const el = document.getElementById('enPassantToast');
+  if (!el) return;
+  el.classList.add('on');
+  if (enPassantToastTimer) clearTimeout(enPassantToastTimer);
+  enPassantToastTimer = setTimeout(() => {
+    el.classList.remove('on');
+    enPassantToastTimer = null;
+  }, 6000);
+}
+
+socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant }) => {
+  if (is_en_passant) showEnPassantToast();
   if (pieces) currentPieces = pieces;
   const attackerDied = combat && !combat.attacker_survived;
   if (chess.fen() !== fen) {
