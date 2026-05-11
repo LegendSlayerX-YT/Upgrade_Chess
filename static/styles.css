@@ -5,6 +5,41 @@ body {
   padding: 0 16px;
   color: #222;
 }
+
+#currencyCounter {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid #e3e6ee;
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  z-index: 1000;
+  font-size: 14px;
+}
+.currency-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #f7f8fb;
+}
+.currency-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+.currency-white { color: #f5f5f5; text-shadow: 0 0 1px #333, 0 0 2px #333; }
+.currency-black { color: #222; }
+.currency-energy { color: #f0a500; }
+.currency-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 1ch;
+}
 h1 { margin-bottom: 4px; }
 #board { width: 480px; margin: 0; }
 
