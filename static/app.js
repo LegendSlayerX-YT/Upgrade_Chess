@@ -945,6 +945,29 @@ socket.on('rematchUnavailable', () => {
   rematchRequestedByMe = false;
 });
 
+const refreshCurrencyBtn = document.getElementById('refreshCurrencyBtn');
+const whiteTokensEl = document.getElementById('whiteTokens');
+const blackTokensEl = document.getElementById('blackTokens');
+const energyEl = document.getElementById('energy');
+
+refreshCurrencyBtn.addEventListener('click', () => {
+  socket.emit('fetchCurrency');
+});
+
+socket.on('currencyData', (data) => {
+  if (!data.found) {
+    setStatus(`No currency record for ${data.email}.`);
+    return;
+  }
+  whiteTokensEl.textContent = data.whiteTokens;
+  blackTokensEl.textContent = data.blackTokens;
+  energyEl.textContent = data.energy;
+});
+
+socket.on('currencyError', ({ reason }) => {
+  setStatus(`Currency fetch failed: ${reason}`);
+});
+
 socket.on('disconnect', () => {
   setStatus('Disconnected from server.');
   gameActive = false;

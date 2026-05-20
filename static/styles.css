@@ -41,6 +41,8 @@ body {
   min-width: 1ch;
 }
 h1 { margin-bottom: 4px; }
+.title-row { display: flex; align-items: center; gap: 12px; }
+.title-row h1 { margin: 0 0 4px 0; }
 #board { width: 480px; margin: 0; }
 
 #boardRow {

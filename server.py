@@ -9,6 +9,8 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 
+import db
+
 load_dotenv()
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
@@ -322,6 +324,28 @@ def on_authenticate(payload):
             "picture": info.get("picture"),
         }
     emit("authenticated", {"name": name})
+
+@socketio.on("fetchCurrency")
+def on_fetch_currency():
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        user = sid_to_user.get(sid)
+    if not user or not user.get("email"):
+        email="chenhenrybunny@gmail.com"
+    else:
+        email=user.get("email")
+    try:
+        currency = db.fetch_currency(email)
+    except Exception as e:
+        emit("currencyError", {"reason": str(e)})
+        return
+    if currency is None:
+        emit("currencyData", {"email": email, "found": False})
+        return
+    payload = currency.to_dict()
+    payload["found"] = True
+    emit("currencyData", payload)
 
 @socketio.on("findGame")
 def on_find_game(payload):
@@ -782,6 +806,6 @@ def on_disconnect():
             games.pop(game_id, None)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT"))
+    port = int(os.environ.get("PORT", 8000))
     print(f"ChessRPG server listening on http://localhost:{port}")
     socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
