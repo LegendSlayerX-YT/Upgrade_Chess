@@ -10,53 +10,56 @@
 <meta name="google-client-id" content="{{ google_client_id }}" />
 </head>
 <body>
-  <h1>Upgrade Chess</h1>
-  <div class="meta">
-    Login using Google in order to play.
-    <br>
-    Then, click <em>Find Game</em>. You'll be paired with the next waiting player.
-  </div>
-
   <div id="auth">
     <div id="g_id_onload"
          data-client_id="{{ google_client_id }}"
          data-callback="handleCredentialResponse"
          data-auto_prompt="false"></div>
-    <div class="g_id_signin" data-type="standard"></div>
+    <div class="g_id_signin" data-type="standard" data-text="signin" data-shape="pill"></div>
     <div id="userBadge" style="display:none;">
-      Signed in as <strong id="userName"></strong>
+      <button id="userMenuBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+        <img id="userAvatar" alt="" />
+        <strong id="userName"></strong>
+      </button>
+      <div id="userMenu" role="menu" style="display:none;">
+        <button id="signOutBtn" type="button" role="menuitem">Sign out</button>
+      </div>
     </div>
   </div>
+  <div class="title-row">
+    <h1>Upgrade Chess</h1>
+  </div>
 
 
-  <div id="status">Idle.</div>
   <div>
     <button id="findBtn" disabled>Find Game</button>
-    <button id="drawBtn" disabled>Offer Draw</button>
-    <button id="resignBtn" disabled>Resign</button>
-  </div>
-  <div id="waiting" aria-live="polite">
-    <div id="waitingPiece">&#9823;</div>
-    <div id="waitingLabel">Searching for an opponent<span id="waitingDots"></span></div>
-  </div>
-
-  <div id="drawPrompt" style="display:none; margin-top:10px; padding:10px 12px; background:#fff7d6; border:1px solid #e6c84a; border-radius:6px;">
-    <span id="drawPromptText">Opponent offers a draw.</span>
-    <button id="drawAcceptBtn" style="margin-left:8px;">Accept</button>
-    <button id="drawDeclineBtn">Decline</button>
   </div>
 
   <div id="setup">
-    <h3>Customize Your Pieces</h3>
-    <div class="setup-hint">Set each piece's level (1–99). HP and damage scale with level. Only the side you're assigned will be used.</div>
+    <div id="currencyCounter" aria-label="Currency">
+      <div class="currency-item" title="White Tokens">
+        <span class="currency-icon currency-white">&#9817;</span>
+        <span class="currency-value" id="whiteTokens">0</span>
+      </div>
+      <div class="currency-item" title="Black Tokens">
+        <span class="currency-icon currency-black">&#9823;</span>
+        <span class="currency-value" id="blackTokens">0</span>
+      </div>
+      <div class="currency-item" title="Energy">
+        <span class="currency-icon currency-energy">&#9889;</span>
+        <span class="currency-value" id="energy">0</span>
+      </div>
+      <button id="refreshCurrencyBtn" type="button" title="Refresh Currency" aria-label="Refresh Currency">&#8635;</button>
+    </div>
+    <h3>Upgrade Your Pieces</h3>
+    <div class="setup-hint">Spend tokens to upgrade pieces. Cost per +1 level: pawn 1, knight/bishop 3, rook 5, queen 8. White tokens upgrade white pieces; black tokens upgrade black pieces. Hold <kbd>Alt</kbd> to switch buttons to downgrade mode (refunds half the cost paid for the last level). Levels persist across games.</div>
     <div class="setup-tabs">
       <button class="setup-tab active" type="button" data-side="w">As White</button>
       <button class="setup-tab" type="button" data-side="b">As Black</button>
     </div>
     <div id="setupGrid" class="setup-grid"></div>
     <div class="setup-actions">
-      <button id="resetLevelsBtn" type="button">Reset side to 1</button>
-      <span class="meta">Levels are saved in this browser.</span>
+      <span class="meta" id="setupStatus">Sign in to load your upgrades.</span>
     </div>
   </div>
 
@@ -67,6 +70,11 @@
         <div class="player-name" id="playerTopName"></div>
         <div class="player-color" id="playerTopColor"></div>
       </div>
+      <div id="drawPrompt" class="draw-prompt" style="display:none;">
+        <span id="drawPromptText">Opponent offers a draw.</span>
+        <button id="drawAcceptBtn">Accept</button>
+        <button id="drawDeclineBtn">Decline</button>
+      </div>
     </div>
     <div id="board"></div>
     <div class="player-card" id="playerBottom" style="visibility:hidden;">
@@ -75,9 +83,15 @@
         <div class="player-name" id="playerBottomName"></div>
         <div class="player-color" id="playerBottomColor"></div>
       </div>
+      <div class="player-actions" id="gameActions">
+        <button id="drawBtn" disabled>Offer Draw</button>
+        <button id="resignBtn" disabled>Resign</button>
+      </div>
     </div>
   </div>
   <div id="pieceTooltip" role="tooltip"></div>
+
+  <div id="topToast" role="status" aria-live="polite"></div>
 
   <div id="enPassantToast" role="status" aria-live="polite">
     <div class="ep-title">En Passant!</div>
@@ -97,6 +111,18 @@
     <div class="modal" style="padding:18px 22px; min-width:0;">
       <h2 style="font-size:16px; margin-bottom:10px;">Promote to:</h2>
       <div id="promoChoices" class="promo-choices"></div>
+    </div>
+  </div>
+
+  <div id="findModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="findModalTitle">
+    <div class="modal">
+      <button class="modal-close" id="findModalCloseBtn" aria-label="Close">&times;</button>
+      <h2 id="findModalTitle">Find a Game</h2>
+      <p class="modal-message" id="findModalMessage">Players waiting for an opponent:</p>
+      <div id="waitingPlayersList" class="waiting-list"></div>
+      <div class="modal-buttons">
+        <button id="createWaitingBtn">Create a New Game</button>
+      </div>
     </div>
   </div>
 
