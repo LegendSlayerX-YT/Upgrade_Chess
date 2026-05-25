@@ -35,12 +35,6 @@
     <button id="findBtn" disabled>Find Game</button>
   </div>
 
-  <div id="drawPrompt" style="display:none; margin-top:10px; padding:10px 12px; background:#fff7d6; border:1px solid #e6c84a; border-radius:6px;">
-    <span id="drawPromptText">Opponent offers a draw.</span>
-    <button id="drawAcceptBtn" style="margin-left:8px;">Accept</button>
-    <button id="drawDeclineBtn">Decline</button>
-  </div>
-
   <div id="setup">
     <div id="currencyCounter" aria-label="Currency">
       <div class="currency-item" title="White Tokens">
@@ -75,6 +69,11 @@
       <div class="player-meta">
         <div class="player-name" id="playerTopName"></div>
         <div class="player-color" id="playerTopColor"></div>
+      </div>
+      <div id="drawPrompt" class="draw-prompt" style="display:none;">
+        <span id="drawPromptText">Opponent offers a draw.</span>
+        <button id="drawAcceptBtn">Accept</button>
+        <button id="drawDeclineBtn">Decline</button>
       </div>
     </div>
     <div id="board"></div>
