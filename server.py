@@ -4,10 +4,11 @@ import threading
 
 import chess
 from dotenv import load_dotenv
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify, make_response
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+from itsdangerous import URLSafeSerializer, BadSignature
 
 import db
 
@@ -16,12 +17,59 @@ load_dotenv()
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 _google_request = google_requests.Request()
+
+SESSION_COOKIE_NAME = "uc_session"
+SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+_session_serializer = URLSafeSerializer(app.secret_key, salt="uc-auth-cookie")
+
+def _read_session_cookie():
+    raw = request.cookies.get(SESSION_COOKIE_NAME)
+    if not raw:
+        return None
+    try:
+        return _session_serializer.loads(raw)
+    except BadSignature:
+        return None
 
 @app.route("/")
 def index():
     return render_template("index.html", google_client_id=GOOGLE_CLIENT_ID)
+
+@app.post("/auth/google")
+def http_auth_google():
+    payload = request.get_json(silent=True) or {}
+    credential = payload.get("credential")
+    if not credential:
+        return jsonify({"error": "missing credential"}), 400
+    try:
+        info = id_token.verify_oauth2_token(
+            credential, _google_request, GOOGLE_CLIENT_ID
+        )
+    except ValueError as e:
+        return jsonify({"error": f"invalid token: {e}"}), 401
+    user = {
+        "sub": info.get("sub"),
+        "name": info.get("name") or info.get("email") or "Player",
+        "email": info.get("email"),
+        "picture": info.get("picture"),
+    }
+    token = _session_serializer.dumps(user)
+    resp = make_response(jsonify({"ok": True, "user": {"name": user["name"], "picture": user["picture"]}}))
+    resp.set_cookie(
+        SESSION_COOKIE_NAME, token,
+        max_age=SESSION_COOKIE_MAX_AGE,
+        httponly=True, samesite="Lax",
+    )
+    return resp
+
+@app.post("/auth/logout")
+def http_auth_logout():
+    resp = make_response(jsonify({"ok": True}))
+    resp.delete_cookie(SESSION_COOKIE_NAME)
+    return resp
 
 PIECE_BASE = {
     "p": {"hp": 10, "dmg": 10},
@@ -40,24 +88,51 @@ SLOT_TO_START_SQUARE = {
     "Pa": "a2", "Pb": "b2", "Pc": "c2", "Pd": "d2",
     "Pe": "e2", "Pf": "f2", "Pg": "g2", "Ph": "h2",
 }
-SLOT_TYPES = {
-    "Ra": "r", "Nb": "n", "Bc": "b", "Q": "q", "K": "k",
-    "Bf": "b", "Ng": "n", "Rh": "r",
-    "Pa": "p", "Pb": "p", "Pc": "p", "Pd": "p",
-    "Pe": "p", "Pf": "p", "Pg": "p", "Ph": "p",
-}
+SLOT_TYPES = db.SLOT_TYPES
+
+WIN_REWARD_TOKENS = 100
 
 PROMO_LETTER_TO_PIECE = {
     "q": chess.QUEEN, "r": chess.ROOK, "b": chess.BISHOP, "n": chess.KNIGHT,
 }
 
-waiting_sid = None
+waiting_players = {}  # sid -> {"name": str, "picture": str|None}
 games = {}
 sid_to_game = {}
 pending_levels = {}
 connected_sids = set()
 sid_to_user = {}
 state_lock = threading.RLock()
+
+
+def waiting_list_payload(self_sid=None):
+    return [
+        {
+            "sid": sid,
+            "name": info.get("name") or "Player",
+            "picture": info.get("picture"),
+            "is_self": sid == self_sid,
+        }
+        for sid, info in waiting_players.items()
+    ]
+
+
+def broadcast_waiting_list():
+    for sid in list(connected_sids):
+        if sid in sid_to_game:
+            continue
+        socketio.emit(
+            "waitingListUpdate",
+            {"players": waiting_list_payload(self_sid=sid)},
+            to=sid,
+        )
+
+
+def remove_from_waiting(sid):
+    if sid in waiting_players:
+        waiting_players.pop(sid, None)
+        return True
+    return False
 
 def display_name_for(sid):
     user = sid_to_user.get(sid)
@@ -204,12 +279,22 @@ def apply_move_to_pieces(pieces, move_info, combat_result=None):
 def make_game_id():
     return secrets.token_hex(4)
 
+def levels_for_sid(sid):
+    user = sid_to_user.get(sid)
+    email = (user or {}).get("email")
+    if email:
+        try:
+            return db.fetch_levels(email)
+        except Exception:
+            pass
+    return {"w": {}, "b": {}}
+
 def start_game(white_sid, black_sid):
     game_id = make_game_id()
     board = chess.Board()
     saved_levels = {
-        white_sid: pending_levels.get(white_sid) or {"w": {}, "b": {}},
-        black_sid: pending_levels.get(black_sid) or {"w": {}, "b": {}},
+        white_sid: levels_for_sid(white_sid),
+        black_sid: levels_for_sid(black_sid),
     }
     white_side = saved_levels[white_sid].get("w", {})
     black_side = saved_levels[black_sid].get("b", {})
@@ -256,21 +341,28 @@ def start_game(white_sid, black_sid):
         to=black_sid,
     )
 
-def pair(sid):
-    global waiting_sid
-    if waiting_sid == sid:
-        return
-    if waiting_sid and waiting_sid in connected_sids:
-        opponent = waiting_sid
-        waiting_sid = None
-        white_is_opponent = secrets.randbelow(2) == 0
-        if white_is_opponent:
-            start_game(opponent, sid)
-        else:
-            start_game(sid, opponent)
+def pair_with(sid, partner_sid):
+    """Pair two specific sids into a game. Returns True if paired."""
+    if sid == partner_sid:
+        return False
+    if partner_sid not in waiting_players or partner_sid not in connected_sids:
+        return False
+    waiting_players.pop(partner_sid, None)
+    waiting_players.pop(sid, None)
+    white_is_partner = secrets.randbelow(2) == 0
+    if white_is_partner:
+        start_game(partner_sid, sid)
     else:
-        waiting_sid = sid
-        socketio.emit("waiting", to=sid)
+        start_game(sid, partner_sid)
+    return True
+
+
+def add_to_waiting(sid):
+    user = sid_to_user.get(sid) or {}
+    waiting_players[sid] = {
+        "name": user.get("name") or "Player",
+        "picture": user.get("picture"),
+    }
 
 def end_game(game_id, payload):
     game = games.get(game_id)
@@ -278,7 +370,26 @@ def end_game(game_id, payload):
         return
     game["state"] = "ended"
     game["rematch_requests"] = set()
+    award_win_reward(game, payload.get("winner"))
     socketio.emit("gameOver", payload, to=game_id)
+
+
+def award_win_reward(game, winner):
+    if winner not in ("white", "black"):
+        return
+    winner_sid = game["white"] if winner == "white" else game["black"]
+    user = sid_to_user.get(winner_sid)
+    email = (user or {}).get("email")
+    if not email:
+        return
+    color = "w" if winner == "white" else "b"
+    try:
+        currency = db.award_tokens(email, color, WIN_REWARD_TOKENS)
+    except Exception:
+        return
+    payload = currency.to_dict()
+    payload["found"] = True
+    socketio.emit("currencyData", payload, to=winner_sid)
 
 def leave_ended_game(sid):
     game_id = sid_to_game.get(sid)
@@ -297,8 +408,13 @@ def leave_ended_game(sid):
 
 @socketio.on("connect")
 def on_connect():
-    from flask import request
-    connected_sids.add(request.sid)
+    sid = request.sid
+    connected_sids.add(sid)
+    user = _read_session_cookie()
+    if user:
+        with state_lock:
+            sid_to_user[sid] = user
+        emit("authenticated", {"name": user["name"], "picture": user.get("picture")})
 
 @socketio.on("authenticate")
 def on_authenticate(payload):
@@ -323,7 +439,7 @@ def on_authenticate(payload):
             "email": info.get("email"),
             "picture": info.get("picture"),
         }
-    emit("authenticated", {"name": name})
+    emit("authenticated", {"name": name, "picture": info.get("picture")})
 
 @socketio.on("fetchCurrency")
 def on_fetch_currency():
@@ -332,9 +448,9 @@ def on_fetch_currency():
     with state_lock:
         user = sid_to_user.get(sid)
     if not user or not user.get("email"):
-        email="chenhenrybunny@gmail.com"
-    else:
-        email=user.get("email")
+        emit("currencyData", {"email": None, "found": False})
+        return
+    email = user.get("email")
     try:
         currency = db.fetch_currency(email)
     except Exception as e:
@@ -348,28 +464,143 @@ def on_fetch_currency():
     emit("currencyData", payload)
 
 @socketio.on("findGame")
-def on_find_game(payload):
+def on_find_game(*_):
     from flask import request
     sid = request.sid
     with state_lock:
         if sid not in sid_to_user:
             emit("authError", {"reason": "login required"})
             return
-        if isinstance(payload, dict):
-            levels_by_color = payload.get("levelsByColor")
-            legacy_levels = payload.get("levels")
-            if isinstance(levels_by_color, dict):
-                cleaned = {"w": {}, "b": {}}
-                for side in ("w", "b"):
-                    src = levels_by_color.get(side) or {}
-                    for slot in SLOT_TYPES:
-                        cleaned[side][slot] = clamp_level(src.get(slot, 1))
-                pending_levels[sid] = cleaned
-            elif isinstance(legacy_levels, dict):
-                same = {slot: clamp_level(legacy_levels.get(slot, 1)) for slot in SLOT_TYPES}
-                pending_levels[sid] = {"w": dict(same), "b": dict(same)}
         leave_ended_game(sid)
-        pair(sid)
+        emit("waitingList", {"players": waiting_list_payload(self_sid=sid)})
+
+
+@socketio.on("createWaitingGame")
+def on_create_waiting_game():
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        if sid not in sid_to_user:
+            emit("authError", {"reason": "login required"})
+            return
+        if sid_to_game.get(sid):
+            return
+        add_to_waiting(sid)
+        emit("waiting")
+    broadcast_waiting_list()
+
+
+@socketio.on("joinWaitingGame")
+def on_join_waiting_game(payload):
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        if sid not in sid_to_user:
+            emit("authError", {"reason": "login required"})
+            return
+        partner_sid = (payload or {}).get("sid") if isinstance(payload, dict) else None
+        if not partner_sid:
+            emit("joinFailed", {"reason": "missing partner"})
+            return
+        leave_ended_game(sid)
+        remove_from_waiting(sid)
+        if not pair_with(sid, partner_sid):
+            emit("joinFailed", {"reason": "Player is no longer available."})
+            emit("waitingList", {"players": waiting_list_payload(self_sid=sid)})
+            return
+    broadcast_waiting_list()
+
+
+@socketio.on("cancelWaiting")
+def on_cancel_waiting():
+    from flask import request
+    sid = request.sid
+    changed = False
+    with state_lock:
+        changed = remove_from_waiting(sid)
+        emit("waitingCancelled")
+    if changed:
+        broadcast_waiting_list()
+
+
+@socketio.on("fetchLevels")
+def on_fetch_levels():
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        user = sid_to_user.get(sid)
+    if not user or not user.get("email"):
+        emit("levelsError", {"reason": "login required"})
+        return
+    try:
+        levels = db.fetch_levels(user["email"])
+    except Exception as e:
+        emit("levelsError", {"reason": str(e)})
+        return
+    emit("levelsData", {"levels": levels, "costs": db.UPGRADE_BASE_COST})
+
+
+@socketio.on("upgradePiece")
+def on_upgrade_piece(payload):
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        user = sid_to_user.get(sid)
+    if not user or not user.get("email"):
+        emit("upgradeError", {"reason": "login required"})
+        return
+    if not isinstance(payload, dict):
+        emit("upgradeError", {"reason": "invalid payload"})
+        return
+    color = payload.get("color")
+    slot = payload.get("slot")
+    if color not in ("w", "b") or slot not in SLOT_TYPES or SLOT_TYPES[slot] == "k":
+        emit("upgradeError", {"reason": "invalid slot"})
+        return
+    try:
+        result = db.upgrade_piece(user["email"], color, slot)
+    except Exception as e:
+        emit("upgradeError", {"reason": str(e)})
+        return
+    if result is None:
+        emit("upgradeError", {"reason": "insufficient currency or max level", "color": color, "slot": slot})
+        return
+    currency_payload = result.currency.to_dict()
+    currency_payload["found"] = True
+    emit("upgraded", {"color": color, "slot": slot, "level": result.new_level})
+    emit("currencyData", currency_payload)
+
+
+@socketio.on("downgradePiece")
+def on_downgrade_piece(payload):
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        user = sid_to_user.get(sid)
+    if not user or not user.get("email"):
+        emit("upgradeError", {"reason": "login required"})
+        return
+    if not isinstance(payload, dict):
+        emit("upgradeError", {"reason": "invalid payload"})
+        return
+    color = payload.get("color")
+    slot = payload.get("slot")
+    if color not in ("w", "b") or slot not in SLOT_TYPES or SLOT_TYPES[slot] == "k":
+        emit("upgradeError", {"reason": "invalid slot"})
+        return
+    try:
+        result = db.downgrade_piece(user["email"], color, slot)
+    except Exception as e:
+        emit("upgradeError", {"reason": str(e)})
+        return
+    if result is None:
+        emit("upgradeError", {"reason": "already at level 1", "color": color, "slot": slot})
+        return
+    currency_payload = result.currency.to_dict()
+    currency_payload["found"] = True
+    emit("upgraded", {"color": color, "slot": slot, "level": result.new_level})
+    emit("currencyData", currency_payload)
+
 
 def commit_move(game, candidate, move_info, san, player_color, combat_result=None):
     game_id = game["id"]
@@ -775,35 +1006,41 @@ def on_cancel_rematch():
     with state_lock:
         leave_ended_game(request.sid)
 
+@socketio.on("signOut")
+def on_sign_out():
+    from flask import request
+    sid = request.sid
+    with state_lock:
+        sid_to_user.pop(sid, None)
+    emit("signedOut", {})
+
 @socketio.on("disconnect")
 def on_disconnect():
     from flask import request
-    global waiting_sid
     sid = request.sid
+    waiting_changed = False
     with state_lock:
         connected_sids.discard(sid)
-        if waiting_sid == sid:
-            waiting_sid = None
+        waiting_changed = remove_from_waiting(sid)
         pending_levels.pop(sid, None)
         sid_to_user.pop(sid, None)
 
         game_id = sid_to_game.get(sid)
-        if not game_id:
-            return
-        game = games.get(game_id)
-        if not game:
-            return
+        game = games.get(game_id) if game_id else None
+        if game:
+            if game["state"] == "active":
+                winner = "black" if sid == game["white"] else "white"
+                end_game(game_id, {"type": "disconnect", "winner": winner})
 
-        if game["state"] == "active":
-            winner = "black" if sid == game["white"] else "white"
-            end_game(game_id, {"type": "disconnect", "winner": winner})
+            sid_to_game.pop(sid, None)
+            opponent_sid = game["black"] if sid == game["white"] else game["white"]
+            if sid_to_game.get(opponent_sid) == game_id:
+                socketio.emit("rematchUnavailable", to=opponent_sid)
+            else:
+                games.pop(game_id, None)
 
-        sid_to_game.pop(sid, None)
-        opponent_sid = game["black"] if sid == game["white"] else game["white"]
-        if sid_to_game.get(opponent_sid) == game_id:
-            socketio.emit("rematchUnavailable", to=opponent_sid)
-        else:
-            games.pop(game_id, None)
+    if waiting_changed:
+        broadcast_waiting_list()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))

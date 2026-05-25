@@ -4,13 +4,47 @@ const socket = io();
 let isAuthenticated = false;
 let myName = null;
 
-window.handleCredentialResponse = (response) => {
+window.handleCredentialResponse = async (response) => {
   if (!response || !response.credential) return;
-  socket.emit('authenticate', { credential: response.credential });
+  try {
+    const res = await fetch('/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ credential: response.credential }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(`Sign-in failed: ${err.error || res.statusText}`);
+      return;
+    }
+    socket.disconnect();
+    socket.connect();
+  } catch (e) {
+    alert(`Sign-in failed: ${e.message}`);
+  }
 };
 
 const userBadge = document.getElementById('userBadge');
 const userNameEl = document.getElementById('userName');
+const userAvatarEl = document.getElementById('userAvatar');
+const signOutBtn = document.getElementById('signOutBtn');
+const userMenuBtn = document.getElementById('userMenuBtn');
+const userMenu = document.getElementById('userMenu');
+
+function setUserMenuOpen(open) {
+  userMenu.style.display = open ? '' : 'none';
+  userMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+userMenuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  setUserMenuOpen(userMenu.style.display === 'none');
+});
+document.addEventListener('click', (e) => {
+  if (!userMenu.contains(e.target) && e.target !== userMenuBtn) {
+    setUserMenuOpen(false);
+  }
+});
 const signInDiv = document.querySelector('.g_id_signin');
 const playerTopEl = document.getElementById('playerTop');
 const playerBottomEl = document.getElementById('playerBottom');
@@ -27,7 +61,7 @@ const FALLBACK_AVATAR =
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44"><circle cx="22" cy="22" r="22" fill="%23d6dae5"/><circle cx="22" cy="17" r="7" fill="%238a93a6"/><path d="M6 40c2-8 10-12 16-12s14 4 16 12z" fill="%238a93a6"/></svg>'
   );
 
-function setPlayerCard(side, name, picture, colorLabel) {
+function setPlayerCard(side, name, picture, colorLabel, color) {
   const isTop = side === 'top';
   const avatar = isTop ? playerTopAvatar : playerBottomAvatar;
   const nameEl = isTop ? playerTopName : playerBottomName;
@@ -37,15 +71,29 @@ function setPlayerCard(side, name, picture, colorLabel) {
   avatar.onerror = () => { avatar.onerror = null; avatar.src = FALLBACK_AVATAR; };
   nameEl.textContent = name;
   colorEl.textContent = colorLabel;
+  card.dataset.color = color;
   card.style.visibility = 'visible';
 }
 
 function hidePlayerCards() {
   playerTopEl.style.visibility = 'hidden';
   playerBottomEl.style.visibility = 'hidden';
+  playerTopEl.classList.remove('active-turn');
+  playerBottomEl.classList.remove('active-turn');
 }
 
-const statusEl = document.getElementById('status');
+function highlightActiveTurn() {
+  if (!gameActive) {
+    playerTopEl.classList.remove('active-turn');
+    playerBottomEl.classList.remove('active-turn');
+    return;
+  }
+  const turn = chess.turn();
+  const myTurn = turn === myColor;
+  playerBottomEl.classList.toggle('active-turn', myTurn);
+  playerTopEl.classList.toggle('active-turn', !myTurn);
+}
+
 const findBtn = document.getElementById('findBtn');
 const resignBtn = document.getElementById('resignBtn');
 const drawBtn = document.getElementById('drawBtn');
@@ -54,9 +102,58 @@ const drawPromptText = document.getElementById('drawPromptText');
 const drawAcceptBtn = document.getElementById('drawAcceptBtn');
 const drawDeclineBtn = document.getElementById('drawDeclineBtn');
 
-const waitingEl = document.getElementById('waiting');
-function showWaiting() { waitingEl.classList.add('on'); }
-function hideWaiting() { waitingEl.classList.remove('on'); }
+const findModal = document.getElementById('findModal');
+const findModalCloseBtn = document.getElementById('findModalCloseBtn');
+const findModalMessage = document.getElementById('findModalMessage');
+const waitingPlayersListEl = document.getElementById('waitingPlayersList');
+const createWaitingBtn = document.getElementById('createWaitingBtn');
+let imWaiting = false;
+
+function renderWaitingList(players) {
+  if (!players || players.length === 0) {
+    waitingPlayersListEl.innerHTML = '<div class="waiting-list-empty">No players waiting. Create a new game to wait for an opponent.</div>';
+    return;
+  }
+  waitingPlayersListEl.innerHTML = players.map(p => `
+    <div class="waiting-row${p.is_self ? ' is-self' : ''}" data-sid="${p.sid}"${p.is_self ? ' data-self="1"' : ''}>
+      <img src="${p.picture || FALLBACK_AVATAR}" alt="" onerror="this.onerror=null;this.src='${FALLBACK_AVATAR}'" />
+      <div class="waiting-name">${(p.name || 'Player').replace(/</g, '&lt;')}</div>
+      ${p.is_self ? '<div class="waiting-self-tag">self</div>' : '<div class="waiting-join">Join →</div>'}
+    </div>
+  `).join('');
+}
+
+function showFindModal() {
+  findModal.classList.add('on');
+  if (imWaiting) {
+    findModalMessage.textContent = 'You are waiting for an opponent. Others can join you, or pick one below.';
+    createWaitingBtn.style.display = 'none';
+  } else {
+    findModalMessage.textContent = 'Players waiting for an opponent:';
+    createWaitingBtn.style.display = '';
+  }
+}
+function hideFindModal() { findModal.classList.remove('on'); }
+
+waitingPlayersListEl.addEventListener('click', (e) => {
+  const row = e.target.closest('.waiting-row');
+  if (!row) return;
+  if (row.dataset.self) return;
+  const partnerSid = row.dataset.sid;
+  if (!partnerSid) return;
+  socket.emit('joinWaitingGame', { sid: partnerSid });
+});
+
+createWaitingBtn.addEventListener('click', () => {
+  socket.emit('createWaitingGame');
+});
+
+findModalCloseBtn.addEventListener('click', () => {
+  hideFindModal();
+  if (imWaiting) {
+    socket.emit('cancelWaiting');
+  }
+});
 
 const endModal = document.getElementById('endModal');
 const modalTitle = document.getElementById('modalTitle');
@@ -131,7 +228,7 @@ promoChoices.addEventListener('click', (e) => {
   }
   socket.emit('move', { from, to, promotion: piece });
   if (board) board.position(chess.fen());
-  updateStatus();
+  highlightActiveTurn();
 });
 
 function hideDrawPrompt() { drawPrompt.style.display = 'none'; }
@@ -190,13 +287,14 @@ const SLOT_DEFS = [
   { slot: 'Ph', type: 'p', file: 'h' },
 ];
 const TYPE_NAME = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
-const LEVEL_STORAGE_KEY_V1 = 'chessrpg.levels.v1';
-const LEVEL_STORAGE_KEY = 'chessrpg.levels.v2';
+
+const DEFAULT_UPGRADE_COSTS = { p: 1, n: 3, b: 3, r: 5, q: 8 };
+const MAX_LEVEL = 99;
 
 function clampLevel(n) {
   const v = Math.floor(Number(n));
   if (!Number.isFinite(v) || v < 1) return 1;
-  if (v > 99) return 99;
+  if (v > MAX_LEVEL) return MAX_LEVEL;
   return v;
 }
 
@@ -206,36 +304,12 @@ function emptyLevels() {
   return out;
 }
 
-function loadLevels() {
-  try {
-    const raw = localStorage.getItem(LEVEL_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const out = { w: emptyLevels(), b: emptyLevels() };
-      for (const side of ['w', 'b']) {
-        for (const { slot } of SLOT_DEFS) {
-          out[side][slot] = clampLevel(parsed?.[side]?.[slot] ?? 1);
-        }
-      }
-      return out;
-    }
-    const legacy = localStorage.getItem(LEVEL_STORAGE_KEY_V1);
-    if (legacy) {
-      const parsed = JSON.parse(legacy);
-      const same = {};
-      for (const { slot } of SLOT_DEFS) same[slot] = clampLevel(parsed?.[slot] ?? 1);
-      return { w: { ...same }, b: { ...same } };
-    }
-  } catch (_) {}
-  return { w: emptyLevels(), b: emptyLevels() };
-}
-
-function saveLevels(levels) {
-  try { localStorage.setItem(LEVEL_STORAGE_KEY, JSON.stringify(levels)); } catch (_) {}
-}
-
-let myLevels = loadLevels();
+let myLevels = { w: emptyLevels(), b: emptyLevels() };
+let upgradeCosts = { ...DEFAULT_UPGRADE_COSTS };
+let myTokens = { w: 0, b: 0 };
+let pendingUpgrade = null;
 let activeSide = 'w';
+let altMode = false;
 
 const SLOT_TO_W_SQUARE = {
   Ra:'a1', Nb:'b1', Bc:'c1', Q:'d1', K:'e1', Bf:'f1', Ng:'g1', Rh:'h1',
@@ -258,9 +332,13 @@ function buildPreviewPieces() {
 
 const setupGrid = document.getElementById('setupGrid');
 const setupSection = document.getElementById('setup');
-const resetLevelsBtn = document.getElementById('resetLevelsBtn');
+const setupStatusEl = document.getElementById('setupStatus');
 const statsSection = document.getElementById('stats');
 const statsListEl = document.getElementById('statsList');
+
+function affordableTokens() {
+  return activeSide === 'w' ? myTokens.w : myTokens.b;
+}
 
 function renderSetup() {
   const sideLevels = myLevels[activeSide];
@@ -272,41 +350,88 @@ function renderSetup() {
   const rankFor = (type) => activeSide === 'w'
     ? (type === 'p' ? '2' : '1')
     : (type === 'p' ? '7' : '8');
+  const tokens = affordableTokens();
+  setupGrid.classList.toggle('alt-mode', altMode);
   setupGrid.innerHTML = ordered.map(({ slot, type, file }) => {
     const label = file + rankFor(type);
     const isKing = type === 'k';
     if (isKing) sideLevels[slot] = 1;
-    const inputAttrs = isKing ? 'disabled title="The king cannot be upgraded."' : '';
+    const level = sideLevels[slot] ?? 1;
+    const baseCost = upgradeCosts[type];
+    const cost = baseCost != null ? baseCost * level : null;
+    const atMax = level >= MAX_LEVEL;
+    const atMin = level <= 1;
+    const isPending = pendingUpgrade && pendingUpgrade.side === activeSide && pendingUpgrade.slot === slot;
+    const canAfford = !isKing && !atMax && cost != null && tokens >= cost;
+    const sideWord = activeSide === 'w' ? 'white' : 'black';
+
+    let action, btnLabel, title, disabled, btnClass;
+    if (isKing) {
+      action = 'none';
+      btnLabel = 'King';
+      title = altMode ? 'The king cannot be downgraded.' : 'The king cannot be upgraded.';
+      disabled = true;
+      btnClass = altMode ? 'downgrade-btn' : 'upgrade-btn';
+    } else if (altMode) {
+      const refund = !atMin && baseCost != null ? Math.floor(baseCost * (level - 1) / 2) : null;
+      action = 'downgrade';
+      disabled = atMin || isPending;
+      btnLabel = isPending ? '…' : `<span class="arrow">▼</span>${refund != null ? ` ${refund}` : ''}`;
+      title = atMin
+        ? 'Already at level 1.'
+        : `Refund ${refund} ${sideWord} token${refund === 1 ? '' : 's'} (level ${level} → ${level - 1}).`;
+      btnClass = 'downgrade-btn';
+    } else {
+      action = 'upgrade';
+      disabled = atMax || !canAfford || isPending;
+      btnLabel = atMax ? 'Max' : isPending ? '…' : `<span class="arrow">▲</span> ${cost}`;
+      title = atMax
+        ? 'Already at max level.'
+        : canAfford
+          ? `Spend ${cost} ${sideWord} token${cost === 1 ? '' : 's'} to reach level ${level + 1}.`
+          : `Need ${cost} ${sideWord} token${cost === 1 ? '' : 's'} (you have ${tokens}).`;
+      btnClass = 'upgrade-btn';
+    }
+
     return `
       <div class="setup-cell${isKing ? ' locked' : ''}">
         <img src="/static/img/chesspieces/wikipedia/${activeSide}${TYPE_NAME[type]}.png" alt="${type}" />
         <div class="slot-label">${label}</div>
-        <input type="number" min="1" max="99" data-slot="${slot}" value="${sideLevels[slot] ?? 1}" ${inputAttrs} />
+        <div class="slot-level">Lv ${level}</div>
+        <button type="button" class="action-btn ${btnClass}" data-slot="${slot}" data-action="${action}" ${disabled ? 'disabled' : ''} title="${title}">${btnLabel}</button>
       </div>
     `;
   }).join('');
 }
 
-setupGrid.addEventListener('input', (e) => {
-  const t = e.target;
-  if (!(t instanceof HTMLInputElement)) return;
-  const slot = t.dataset.slot;
-  if (!slot) return;
-  myLevels[activeSide][slot] = clampLevel(t.value);
-  saveLevels(myLevels);
-  refreshPreviewPieces();
-});
-setupGrid.addEventListener('change', (e) => {
-  const t = e.target;
-  if (!(t instanceof HTMLInputElement)) return;
-  t.value = String(clampLevel(t.value));
-});
-resetLevelsBtn.addEventListener('click', () => {
-  for (const { slot } of SLOT_DEFS) myLevels[activeSide][slot] = 1;
-  saveLevels(myLevels);
+setupGrid.addEventListener('click', (e) => {
+  const btn = e.target.closest('.action-btn');
+  if (!btn || btn.disabled) return;
+  const slot = btn.dataset.slot;
+  const action = btn.dataset.action;
+  if (!slot || (action !== 'upgrade' && action !== 'downgrade')) return;
+  if (!isAuthenticated) {
+    alert('Sign in to upgrade pieces.');
+    return;
+  }
+  pendingUpgrade = { side: activeSide, slot };
   renderSetup();
-  refreshPreviewPieces();
+  socket.emit(action === 'downgrade' ? 'downgradePiece' : 'upgradePiece', { color: activeSide, slot });
 });
+
+function setAltMode(on) {
+  if (altMode === on) return;
+  altMode = on;
+  renderSetup();
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Alt') setAltMode(true);
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Alt') setAltMode(false);
+});
+window.addEventListener('blur', () => setAltMode(false));
+
 document.querySelectorAll('.setup-tab').forEach(btn => {
   btn.addEventListener('click', () => {
     const side = btn.dataset.side;
@@ -588,16 +713,6 @@ function playCaptureAnimation({
 }
 
 
-function setStatus(msg) { statusEl.textContent = msg; }
-
-function updateStatus() {
-  if (!gameActive) return;
-  const turn = chess.turn() === 'w' ? 'White' : 'Black';
-  const me = myColor === 'w' ? 'White' : 'Black';
-  let s = `You are ${me}. ${turn} to move.`;
-  if (chess.inCheck()) s += ' Check!';
-  setStatus(s);
-}
 
 function onDragStart(_source, piece) {
   if (!gameActive) return false;
@@ -655,7 +770,7 @@ function onDrop(source, target) {
   if (!move) return 'snapback';
 
   socket.emit('move', { from: source, to: target });
-  updateStatus();
+  highlightActiveTurn();
 }
 
 function onSnapEnd() {
@@ -684,7 +799,7 @@ function startBoard(fen, color) {
   showSetup(false);
   showStats(true);
   renderStats();
-  updateStatus();
+  highlightActiveTurn();
 }
 
 function endGame(payload) {
@@ -695,7 +810,6 @@ function endGame(payload) {
   drawBtn.disabled = true;
   drawBtn.textContent = 'Offer Draw';
   hideDrawPrompt();
-  hideWaiting();
   hidePromotionPicker();
   showSetup(true);
   showStats(false);
@@ -716,7 +830,6 @@ function endGame(payload) {
     case 'draw': msg = 'Draw.'; break;
     default: msg = 'Game over.';
   }
-  setStatus(msg);
   showEndModal(msg);
   if (payload.type === 'disconnect') {
     modalRematchBtn.disabled = true;
@@ -726,28 +839,104 @@ function endGame(payload) {
 
 findBtn.addEventListener('click', () => {
   if (!isAuthenticated) {
-    setStatus('Please sign in with Google first.');
+    alert('Please sign in with Google first.');
     return;
   }
-  setStatus('Looking for an opponent…');
-  findBtn.disabled = true;
-  socket.emit('findGame', { levelsByColor: myLevels });
+  socket.emit('findGame');
 });
 
-socket.on('authenticated', ({ name }) => {
+socket.on('authenticated', ({ name, picture }) => {
   isAuthenticated = true;
   myName = name;
   userNameEl.textContent = name;
+  if (picture) {
+    userAvatarEl.src = picture;
+    userAvatarEl.style.display = '';
+  } else {
+    userAvatarEl.style.display = 'none';
+  }
   userBadge.style.display = '';
   if (signInDiv) signInDiv.style.display = 'none';
   if (!gameActive) findBtn.disabled = false;
-  setStatus(`Signed in as ${name}. Click Find Game.`);
+  if (setupStatusEl) setupStatusEl.textContent = 'Loading your upgrades…';
+  socket.emit('fetchLevels');
+  socket.emit('fetchCurrency');
 });
 
 socket.on('authError', ({ reason }) => {
-  setStatus(`Sign-in failed: ${reason}`);
+  alert(`Sign-in failed: ${reason}`);
   isAuthenticated = false;
   findBtn.disabled = true;
+});
+
+signOutBtn.addEventListener('click', async () => {
+  setUserMenuOpen(false);
+  try {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch { /* ignore network failure; UI signs out either way */ }
+  isAuthenticated = false;
+  myName = null;
+  userBadge.style.display = 'none';
+  userNameEl.textContent = '';
+  userAvatarEl.removeAttribute('src');
+  if (signInDiv) signInDiv.style.display = '';
+  findBtn.disabled = true;
+  if (window.google && window.google.accounts && window.google.accounts.id) {
+    window.google.accounts.id.disableAutoSelect();
+  }
+  socket.disconnect();
+  socket.connect();
+});
+
+socket.on('signedOut', () => {
+  isAuthenticated = false;
+  myName = null;
+  userBadge.style.display = 'none';
+  userNameEl.textContent = '';
+  userAvatarEl.removeAttribute('src');
+  if (signInDiv) signInDiv.style.display = '';
+  findBtn.disabled = true;
+  if (window.google && window.google.accounts && window.google.accounts.id) {
+    window.google.accounts.id.disableAutoSelect();
+  }
+});
+
+socket.on('levelsData', ({ levels, costs }) => {
+  if (levels && typeof levels === 'object') {
+    for (const side of ['w', 'b']) {
+      const src = levels[side] || {};
+      for (const { slot } of SLOT_DEFS) {
+        myLevels[side][slot] = clampLevel(src[slot] ?? 1);
+      }
+    }
+  }
+  if (costs && typeof costs === 'object') {
+    upgradeCosts = { ...DEFAULT_UPGRADE_COSTS, ...costs };
+  }
+  if (setupStatusEl) setupStatusEl.textContent = 'Upgrades are stored on your account.';
+  renderSetup();
+  refreshPreviewPieces();
+});
+
+socket.on('levelsError', ({ reason }) => {
+  if (setupStatusEl) setupStatusEl.textContent = `Could not load upgrades: ${reason}`;
+});
+
+socket.on('upgraded', ({ color, slot, level }) => {
+  if (color === 'w' || color === 'b') {
+    myLevels[color][slot] = clampLevel(level);
+  }
+  if (pendingUpgrade && pendingUpgrade.side === color && pendingUpgrade.slot === slot) {
+    pendingUpgrade = null;
+  }
+  renderSetup();
+  refreshPreviewPieces();
+});
+
+socket.on('upgradeError', ({ reason }) => {
+  pendingUpgrade = null;
+  alert(`Upgrade failed: ${reason}`);
+  renderSetup();
 });
 
 resignBtn.addEventListener('click', () => {
@@ -772,20 +961,40 @@ drawDeclineBtn.addEventListener('click', () => {
 });
 
 socket.on('waiting', () => {
-  setStatus('Waiting for an opponent to join…');
-  showWaiting();
+  imWaiting = true;
+  showFindModal();
 });
 
-socket.on('paired', ({ gameId, color, fen, pieces, you, opponent, yourPicture, opponentPicture }) => {
-  hideWaiting();
+socket.on('waitingList', ({ players }) => {
+  renderWaitingList(players || []);
+  showFindModal();
+});
+
+socket.on('waitingListUpdate', ({ players }) => {
+  if (!findModal.classList.contains('on')) return;
+  renderWaitingList(players || []);
+});
+
+socket.on('waitingCancelled', () => {
+  imWaiting = false;
+});
+
+socket.on('joinFailed', ({ reason }) => {
+  alert(reason || 'Could not join that game.');
+});
+
+socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentPicture }) => {
+  imWaiting = false;
   hideEndModal();
+  hideFindModal();
   const youLabel = you || myName || 'You';
   const oppLabel = opponent || 'Opponent';
-  setStatus(`Paired! Game ${gameId}. You are ${color}. Playing against ${oppLabel}.`);
   const youColor = color === 'white' ? 'White' : 'Black';
   const oppColor = color === 'white' ? 'Black' : 'White';
-  setPlayerCard('top', oppLabel, opponentPicture, oppColor);
-  setPlayerCard('bottom', youLabel, yourPicture, youColor);
+  const meCode = color === 'white' ? 'w' : 'b';
+  const oppCode = meCode === 'w' ? 'b' : 'w';
+  setPlayerCard('top', oppLabel, opponentPicture, oppColor, oppCode);
+  setPlayerCard('bottom', youLabel, yourPicture, youColor, meCode);
   currentPieces = pieces || {};
   startBoard(fen, color);
 });
@@ -861,7 +1070,7 @@ socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant
   }
   if (board) board.position(chess.fen());
   renderStats();
-  updateStatus();
+  highlightActiveTurn();
 
   awaitingCapture = false;
   if (currentDuel) {
@@ -872,7 +1081,7 @@ socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant
 });
 
 socket.on('illegalMove', ({ reason }) => {
-  setStatus(`Move rejected: ${reason}`);
+  alert(`Move rejected: ${reason}`);
   awaitingCapture = false;
   if (board) board.position(chess.fen());
 });
@@ -912,10 +1121,7 @@ modalCloseBtn.addEventListener('click', () => {
 modalNewGameBtn.addEventListener('click', () => {
   hideEndModal();
   rematchRequestedByMe = false;
-  setStatus('Looking for an opponent…');
-  findBtn.disabled = true;
-  showWaiting();
-  socket.emit('findGame', { levelsByColor: myLevels });
+  socket.emit('findGame');
 });
 
 modalRematchBtn.addEventListener('click', () => {
@@ -956,27 +1162,33 @@ refreshCurrencyBtn.addEventListener('click', () => {
 
 socket.on('currencyData', (data) => {
   if (!data.found) {
-    setStatus(`No currency record for ${data.email}.`);
+    whiteTokensEl.textContent = '0';
+    blackTokensEl.textContent = '0';
+    energyEl.textContent = '0';
+    myTokens = { w: 0, b: 0 };
+    renderSetup();
     return;
   }
   whiteTokensEl.textContent = data.whiteTokens;
   blackTokensEl.textContent = data.blackTokens;
   energyEl.textContent = data.energy;
+  myTokens = { w: data.whiteTokens, b: data.blackTokens };
+  renderSetup();
 });
 
 socket.on('currencyError', ({ reason }) => {
-  setStatus(`Currency fetch failed: ${reason}`);
+  alert(`Currency fetch failed: ${reason}`);
 });
 
 socket.on('disconnect', () => {
-  setStatus('Disconnected from server.');
   gameActive = false;
   isAuthenticated = false;
+  imWaiting = false;
   findBtn.disabled = true;
   resignBtn.disabled = true;
   drawBtn.disabled = true;
   hidePlayerCards();
-  hideWaiting();
+  hideFindModal();
 });
 
 board = Chessboard('board', {
