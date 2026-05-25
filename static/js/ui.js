@@ -207,8 +207,8 @@ modalRematchBtn.addEventListener('click', () => {
 const promoModal = document.getElementById('promoModal');
 const promoChoices = document.getElementById('promoChoices');
 
-export function showPromotionPicker(from, to, color) {
-  state.pendingPromotion = { from, to };
+export function showPromotionPicker(from, to, color, opts = {}) {
+  state.pendingPromotion = { from, to, deferred: !!opts.deferred };
   const c = color === 'w' ? 'w' : 'b';
   const pieces = [['q','Queen'], ['r','Rook'], ['b','Bishop'], ['n','Knight']];
   promoChoices.innerHTML = pieces.map(([p, label]) => `
@@ -228,8 +228,14 @@ promoChoices.addEventListener('click', (e) => {
   const btn = e.target.closest('.promo-btn');
   if (!btn || !state.pendingPromotion) return;
   const piece = btn.dataset.piece;
-  const { from, to } = state.pendingPromotion;
+  const { from, to, deferred } = state.pendingPromotion;
   hidePromotionPicker();
+
+  if (deferred) {
+    // Combat already resolved; just tell the server which piece to promote to.
+    socket.emit('choosePromotion', { piece });
+    return;
+  }
 
   const legal = state.chess.moves({ square: from, verbose: true })
     .find(m => m.to === to && m.promotion === piece);

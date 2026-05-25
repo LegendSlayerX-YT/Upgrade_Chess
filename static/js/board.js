@@ -115,6 +115,14 @@ export function clearSelection() {
 // Returns: 'pending' | 'invalid' | 'no-visual' | 'move-visual'
 function attemptMove(source, target) {
   if (isPromotionMove(source, target)) {
+    const legalPromo = state.chess.moves({ square: source, verbose: true })
+      .find(m => m.to === target);
+    if (legalPromo && legalPromo.captured) {
+      // Capture-promotion: defer the choice until after the duel resolves.
+      state.awaitingCapture = true;
+      socket.emit('move', { from: source, to: target });
+      return 'move-visual';
+    }
     const color = state.chess.get(source).color;
     showPromotionPicker(source, target, color);
     return 'pending';
@@ -298,9 +306,13 @@ export function endGame(payload) {
   showSetup(true);
   showStats(false);
   refreshPreviewPieces();
-  if (state.board && typeof state.board.orientation === 'function') {
-    state.board.orientation(state.activeSide === 'b' ? 'black' : 'white');
-  }
+  if (state.board) state.board.destroy();
+  state.board = Chessboard('board', {
+    draggable: false,
+    position: 'start',
+    orientation: state.activeSide === 'b' ? 'black' : 'white',
+    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+  });
   let msg;
   switch (payload.type) {
     case 'checkmate': msg = `Checkmate. ${payload.winner} wins.`; break;
@@ -409,6 +421,19 @@ socket.on('drawDeclined', () => {
 socket.on('drawOfferCleared', () => {
   resetDrawButton();
   hideDrawPrompt();
+});
+
+socket.on('needPromotion', ({ from, to, color }) => {
+  // Duel finished with the attacker surviving; resolve the duel animation
+  // for both players, then prompt only the attacker to pick a piece.
+  if (state.currentDuel) {
+    const d = state.currentDuel;
+    state.currentDuel = null;
+    d.resolve('defender');
+  }
+  if (color === state.myColor) {
+    showPromotionPicker(from, to, color, { deferred: true });
+  }
 });
 
 socket.on('gameOver', endGame);

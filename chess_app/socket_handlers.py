@@ -285,6 +285,9 @@ def on_move(payload):
 
             defender_color = "b" if mover_color == "w" else "w"
             defender_sid = game["black"] if defender_color == "b" else game["white"]
+            # If the move would promote on capture, defer the promotion choice
+            # until after the duel resolves so the player can see who survived.
+            deferred_promotion = bool(promotion_letter) and attacker_piece["type"] == "p"
             game["pending_capture"] = {
                 "attacker_sid": sid,
                 "defender_sid": defender_sid,
@@ -300,6 +303,7 @@ def on_move(payload):
                 "attacker_dmg": attacker_piece["dmg"],
                 "defender_dmg": defender_piece["dmg"],
                 "turn": "attacker",
+                "deferred_promotion": deferred_promotion,
             }
             socketio.emit(
                 "captureWindow",
@@ -402,6 +406,22 @@ def on_duel_strike():
         defender_alive = pending["defender_hp"] > 0
 
         if not attacker_alive or not defender_alive:
+            if attacker_alive and pending.get("deferred_promotion"):
+                # Pawn survived a capture into the promotion rank: ask the
+                # attacker which piece to promote to before committing. The
+                # event goes to the whole room so the opponent's duel overlay
+                # also tears down while we wait.
+                pending["awaiting_promotion"] = True
+                socketio.emit(
+                    "needPromotion",
+                    {
+                        "from": pending["move_info"]["from"],
+                        "to": pending["move_info"]["to"],
+                        "color": pending["attacker_color"],
+                    },
+                    to=game_id,
+                )
+                return
             combat_result = {
                 "attacker_survived": attacker_alive,
                 "defender_survived": defender_alive,
@@ -429,6 +449,48 @@ def on_duel_strike():
                 "turn": pending["turn"],
             },
             to=game_id,
+        )
+
+
+@socketio.on("choosePromotion")
+def on_choose_promotion(payload):
+    sid = request.sid
+    piece_letter = (payload or {}).get("piece") if isinstance(payload, dict) else None
+    if piece_letter not in PROMO_LETTER_TO_PIECE:
+        return
+    with state.state_lock:
+        game_id = state.sid_to_game.get(sid)
+        game = state.games.get(game_id) if game_id else None
+        if not game or game["state"] != "active":
+            return
+        pending = game.get("pending_capture")
+        if not pending or not pending.get("awaiting_promotion"):
+            return
+        if pending["attacker_sid"] != sid:
+            return
+
+        from_sq = chess.parse_square(pending["move_info"]["from"])
+        to_sq = chess.parse_square(pending["move_info"]["to"])
+        candidate = chess.Move(from_sq, to_sq, promotion=PROMO_LETTER_TO_PIECE[piece_letter])
+
+        move_info = dict(pending["move_info"])
+        move_info["promotion"] = piece_letter
+
+        combat_result = {
+            "attacker_survived": True,
+            "defender_survived": False,
+            "attacker_hp": pending["attacker_hp"],
+            "defender_hp": pending["defender_hp"],
+            "log": [],
+        }
+        game["pending_capture"] = None
+        commit_move(
+            game,
+            candidate,
+            move_info,
+            pending["san"],
+            pending["player_color"],
+            combat_result=combat_result,
         )
 
 
