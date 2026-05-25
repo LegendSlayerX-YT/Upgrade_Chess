@@ -716,11 +716,17 @@ function playCaptureAnimation({
 
 function onDragStart(_source, piece) {
   if (!gameActive) return false;
-  if (chess.isGameOver()) return false;
-  if (awaitingCapture) return false;
+  if (chess.isGameOver()) { showTopToast('Game is over.'); return false; }
+  if (awaitingCapture) { showTopToast('Resolving combat…'); return false; }
   if ((myColor === 'w' && piece.startsWith('b')) ||
-      (myColor === 'b' && piece.startsWith('w'))) return false;
-  if (chess.turn() !== myColor) return false;
+      (myColor === 'b' && piece.startsWith('w'))) {
+    showTopToast('That piece isn’t yours.');
+    return false;
+  }
+  if (chess.turn() !== myColor) {
+    showTopToast('It’s the opponent’s turn.');
+    return false;
+  }
 }
 
 function isPromotionMove(source, target) {
@@ -748,7 +754,10 @@ function onDrop(source, target) {
 
   const legal = chess.moves({ square: source, verbose: true })
     .find(m => m.to === target);
-  if (!legal && !isKingAttack) return 'snapback';
+  if (!legal && !isKingAttack) {
+    if (source !== target) showTopToast('Invalid move.');
+    return 'snapback';
+  }
   if (isKingAttack) {
     awaitingCapture = true;
     socket.emit('move', { from: source, to: target });
@@ -767,7 +776,10 @@ function onDrop(source, target) {
   } catch (_) {
     move = null;
   }
-  if (!move) return 'snapback';
+  if (!move) {
+    showTopToast('Invalid move.');
+    return 'snapback';
+  }
 
   socket.emit('move', { from: source, to: target });
   highlightActiveTurn();
@@ -1041,6 +1053,19 @@ socket.on('duelUpdate', ({ attackerHp, defenderHp, turn }) => {
   if (currentDuel) currentDuel.update({ attackerHp, defenderHp, turn });
 });
 
+let topToastTimer = null;
+function showTopToast(msg, ms = 2200) {
+  const el = document.getElementById('topToast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('on');
+  if (topToastTimer) clearTimeout(topToastTimer);
+  topToastTimer = setTimeout(() => {
+    el.classList.remove('on');
+    topToastTimer = null;
+  }, ms);
+}
+
 let enPassantToastTimer = null;
 function showEnPassantToast() {
   const el = document.getElementById('enPassantToast');
@@ -1081,7 +1106,7 @@ socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant
 });
 
 socket.on('illegalMove', ({ reason }) => {
-  alert(`Move rejected: ${reason}`);
+  showTopToast(`Move rejected: ${reason}`);
   awaitingCapture = false;
   if (board) board.position(chess.fen());
 });
