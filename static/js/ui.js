@@ -1,4 +1,4 @@
-import { socket, state, FALLBACK_AVATAR, TYPE_FULL } from './state.js';
+import { socket, state, FALLBACK_AVATAR, TYPE_FULL, PIECES_BASE } from './state.js';
 
 // ---------- Top toast ----------
 let topToastTimer = null;
@@ -213,7 +213,7 @@ export function showPromotionPicker(from, to, color, opts = {}) {
   const pieces = [['q','Queen'], ['r','Rook'], ['b','Bishop'], ['n','Knight']];
   promoChoices.innerHTML = pieces.map(([p, label]) => `
     <button class="promo-btn" data-piece="${p}" aria-label="${label}" title="${label}">
-      <img src="/static/img/chesspieces/wikipedia/${c}${p.toUpperCase()}.png" alt="${label}" />
+      <img src="${PIECES_BASE}/${c}${p.toUpperCase()}.png" alt="${label}" />
     </button>
   `).join('');
   promoModal.classList.add('on');

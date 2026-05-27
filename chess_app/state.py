@@ -19,6 +19,22 @@ app = Flask(
     template_folder=os.path.join(_ROOT, "templates"),
     static_folder=os.path.join(_ROOT, "static"),
 )
+
+
+class PrefixMiddleware:
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+    def __call__(self, environ, start_response):
+        prefix = environ.get("HTTP_X_FORWARDED_PREFIX", "")
+        if prefix:
+            environ["SCRIPT_NAME"] = prefix
+            path = environ["PATH_INFO"]
+            if path.startswith(prefix):
+                environ["PATH_INFO"] = path[len(prefix):]
+        return self.wsgi_app(environ, start_response)
+
+
+app.wsgi_app = PrefixMiddleware(app.wsgi_app)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 

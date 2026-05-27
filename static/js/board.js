@@ -1,4 +1,4 @@
-import { socket, state, Chess } from './state.js';
+import { socket, state, Chess, PIECES_BASE } from './state.js';
 import {
   showTopToast, showEnPassantToast,
   setPlayerCard, hidePlayerCards, highlightActiveTurn,
@@ -266,7 +266,7 @@ export function initPreviewBoard() {
   state.board = Chessboard('board', {
     draggable: false,
     position: 'start',
-    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: `${PIECES_BASE}/{piece}.png`,
   });
 }
 
@@ -278,7 +278,7 @@ export function startBoard(fen, color) {
     draggable: true,
     position: fen,
     orientation: color,
-    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: `${PIECES_BASE}/{piece}.png`,
     onDragStart,
     onDrop,
     onSnapEnd,
@@ -311,7 +311,7 @@ export function endGame(payload) {
     draggable: false,
     position: 'start',
     orientation: state.activeSide === 'b' ? 'black' : 'white',
-    pieceTheme: '/static/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: `${PIECES_BASE}/{piece}.png`,
   });
   let msg;
   switch (payload.type) {

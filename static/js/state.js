@@ -1,7 +1,12 @@
 import { Chess } from 'https://esm.sh/chess.js@1.0.0-beta.8';
 
 export { Chess };
-export const socket = io();
+
+export const APP_PREFIX = window.APP_PREFIX || '';
+export const STATIC_BASE = `${APP_PREFIX}/static`;
+export const PIECES_BASE = `${STATIC_BASE}/img/chesspieces/wikipedia`;
+
+export const socket = io({ path: `${APP_PREFIX}/socket.io` });
 
 export const FALLBACK_AVATAR =
   'data:image/svg+xml;utf8,' +
@@ -74,7 +79,7 @@ export function emptyLevels() {
 }
 
 export const PIECE_IMG = (color, type) =>
-  `/static/img/chesspieces/wikipedia/${color}${TYPE_NAME[type]}.png`;
+  `${PIECES_BASE}/${color}${TYPE_NAME[type]}.png`;
 
 export const state = {
   isAuthenticated: false,

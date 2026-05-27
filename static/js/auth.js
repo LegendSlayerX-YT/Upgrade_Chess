@@ -1,4 +1,4 @@
-import { socket, state } from './state.js';
+import { socket, state, APP_PREFIX } from './state.js';
 import { setUserMenuOpen, setFindBtnEnabled } from './ui.js';
 
 const userBadge = document.getElementById('userBadge');
@@ -11,7 +11,7 @@ const setupStatusEl = document.getElementById('setupStatus');
 window.handleCredentialResponse = async (response) => {
   if (!response || !response.credential) return;
   try {
-    const res = await fetch('/auth/google', {
+    const res = await fetch(`${APP_PREFIX}/auth/google`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -45,7 +45,7 @@ function clearSignedInUi() {
 signOutBtn.addEventListener('click', async () => {
   setUserMenuOpen(false);
   try {
-    await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    await fetch(`${APP_PREFIX}/auth/logout`, { method: 'POST', credentials: 'same-origin' });
   } catch { /* ignore network failure; UI signs out either way */ }
   clearSignedInUi();
   socket.disconnect();

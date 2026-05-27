@@ -2,6 +2,7 @@ import {
   socket, state,
   SLOT_DEFS, TYPE_NAME, MAX_LEVEL,
   DEFAULT_UPGRADE_COSTS, clampLevel, buildPreviewPieces,
+  PIECES_BASE,
 } from './state.js';
 
 const setupGrid = document.getElementById('setupGrid');
@@ -83,7 +84,7 @@ export function renderSetup() {
 
     return `
       <div class="setup-cell${isKing ? ' locked' : ''}">
-        <img src="/static/img/chesspieces/wikipedia/${state.activeSide}${TYPE_NAME[type]}.png" alt="${type}" />
+        <img src="${PIECES_BASE}/${state.activeSide}${TYPE_NAME[type]}.png" alt="${type}" />
         <div class="slot-label">${label}</div>
         <div class="slot-level">Lv ${level}</div>
         <button type="button" class="action-btn ${btnClass}" data-slot="${slot}" data-action="${action}" ${disabled ? 'disabled' : ''} title="${title}">${btnLabel}</button>
@@ -147,7 +148,7 @@ export function renderStats() {
     });
   statsListEl.innerHTML = mine.map(([sq, p]) => `
     <div class="row">
-      <img src="/static/img/chesspieces/wikipedia/${p.color}${TYPE_NAME[p.type]}.png" alt="${p.type}" />
+      <img src="${PIECES_BASE}/${p.color}${TYPE_NAME[p.type]}.png" alt="${p.type}" />
       <span class="sq">${sq}</span>
       <span class="lvl">L${p.level}</span>
       <span class="hp">${p.hp}hp</span>
