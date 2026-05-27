@@ -6,7 +6,8 @@
 <link rel="stylesheet"
       href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
 <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+<script src="https://accounts.google.com/gsi/client" defer></script>
 <meta name="google-client-id" content="{{ google_client_id }}" />
 </head>
 <body>
@@ -143,6 +144,5 @@
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
