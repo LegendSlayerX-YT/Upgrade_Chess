@@ -201,6 +201,34 @@ refreshCurrencyBtn.addEventListener('click', () => {
   socket.emit('fetchCurrency');
 });
 
+// Energy regenerates over time; on hover show when the displayed value will
+// reach the next whole point. The server sends an absolute ISO timestamp
+// (state.energyNextAt); format it fresh on each hover so the relative "(in …)"
+// stays accurate.
+const energyItemEl = document.getElementById('energy-item');
+const energyBalloonEl = document.getElementById('energy-balloon');
+
+function energyBalloonText(iso) {
+  if (!iso) return '';
+  const next = new Date(iso);
+  if (isNaN(next.getTime())) return '';
+  const time = next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const diffMs = next.getTime() - Date.now();
+  if (diffMs <= 0) return 'Next ⚡ any moment now';
+  const mins = Math.round(diffMs / 60000);
+  const rel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+  return `Next ⚡ at ${time} (in ${rel})`;
+}
+
+if (energyItemEl && energyBalloonEl) {
+  energyItemEl.addEventListener('mouseenter', () => {
+    const text = energyBalloonText(state.energyNextAt);
+    energyBalloonEl.textContent = text;
+    energyBalloonEl.classList.toggle('has-data', Boolean(text));
+    energyBalloonEl.setAttribute('aria-hidden', text ? 'false' : 'true');
+  });
+}
+
 socket.on('currencyData', (data) => {
   if (!data.found) {
     whiteTokensEl.textContent = '0';
@@ -208,6 +236,7 @@ socket.on('currencyData', (data) => {
     energyEl.textContent = '0';
     state.myTokens = { w: 0, b: 0 };
     state.myEnergy = 0;
+    state.energyNextAt = null;
     refreshFindAvailability();
     renderSetup();
     return;
@@ -217,6 +246,7 @@ socket.on('currencyData', (data) => {
   energyEl.textContent = data.energy;
   state.myTokens = { w: data.whiteTokens, b: data.blackTokens };
   state.myEnergy = data.energy;
+  state.energyNextAt = data.energyNextAt || null;
   refreshFindAvailability();
   renderSetup();
 });

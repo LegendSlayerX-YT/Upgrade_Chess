@@ -100,6 +100,7 @@ export const state = {
   upgradeCosts: { ...DEFAULT_UPGRADE_COSTS },
   myTokens: { w: 0, b: 0 },
   myEnergy: 0,
+  energyNextAt: null,
   pendingUpgrade: null,
   activeSide: 'w',
   altMode: false,

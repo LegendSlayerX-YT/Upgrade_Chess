@@ -3,7 +3,6 @@ from db.currency import (
     award_tokens,
     change_currency,
     fetch_currency,
-    grant_energy_to_all,
     spend_energy_from_pair,
 )
 from db.piece_levels import (
@@ -27,7 +26,6 @@ __all__ = [
     "downgrade_piece",
     "fetch_currency",
     "fetch_levels",
-    "grant_energy_to_all",
     "spend_energy_from_pair",
     "upgrade_piece",
 ]

@@ -630,3 +630,41 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .promo-btn:hover { border-color: #4a90e2; background: #eaf3ff; }
 .promo-btn img { width: 100%; height: 100%; display: block; }
+
+/* Energy balloon: on hover over the energy counter, shows the time at which the
+   displayed energy will regenerate to the next whole point. Toggled via the
+   `has-data` class so it only appears once the client knows the next-tick time. */
+.currency-item { position: relative; }
+.energy-balloon {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: #2b2b2b;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  z-index: 10;
+  pointer-events: none;
+}
+.energy-balloon::after {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #2b2b2b;
+}
+#energy-item:hover .energy-balloon.has-data {
+  opacity: 1;
+  visibility: visible;
+}
