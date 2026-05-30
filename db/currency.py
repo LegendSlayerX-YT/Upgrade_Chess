@@ -69,6 +69,45 @@ def change_currency(
     return _row_to_currency(row) if row else None
 
 
+def grant_energy_to_all(amount: int) -> int:
+    """Add `amount` energy to every player (online or offline). Returns the
+    number of rows updated."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE players.currency_data SET energy = energy + %s",
+                (amount,),
+            )
+            return cur.rowcount
+
+
+def spend_energy_from_pair(
+    email_a: str,
+    email_b: str,
+    amount: int,
+) -> Optional[dict]:
+    """Atomically deduct `amount` energy from both players. Charges both or
+    neither: if either lacks enough energy (or has no currency row), nothing is
+    deducted. Returns a dict mapping email -> updated Currency on success, or
+    None if the pair could not be charged."""
+    with connect() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE players.currency_data
+                SET energy = energy - %s
+                WHERE email IN (%s, %s) AND energy >= %s
+                RETURNING email, white_tokens, black_tokens, energy
+                """,
+                (amount, email_a, email_b, amount),
+            )
+            charged = {row["email"]: _row_to_currency(row) for row in cur.fetchall()}
+            if set(charged) != {email_a, email_b}:
+                conn.rollback()
+                return None
+    return charged
+
+
 def award_tokens(email: str, color: str, amount: int) -> Currency:
     """Upsert currency row and credit `amount` to the given color's token pool."""
     if color not in ("w", "b"):

@@ -23,6 +23,9 @@ SLOT_TYPES = db.SLOT_TYPES
 
 WIN_REWARD_TOKENS = 10
 
+# Energy each player must pay to start a game (matchmaking or rematch).
+GAME_ENERGY_COST = 5
+
 HP_TO_DMG_INC_RATIO = 1.5
 
 PROMO_LETTER_TO_PIECE = {

@@ -1,4 +1,4 @@
-import { socket, state, FALLBACK_AVATAR, TYPE_FULL, PIECES_BASE } from './state.js';
+import { socket, state, FALLBACK_AVATAR, TYPE_FULL, PIECES_BASE, GAME_ENERGY_COST } from './state.js';
 
 // ---------- Top toast ----------
 let topToastTimer = null;
@@ -121,11 +121,34 @@ export function showFindModal() {
 }
 export function hideFindModal() { findModal.classList.remove('on'); }
 export function isFindModalOpen() { return findModal.classList.contains('on'); }
-export function setFindBtnEnabled(enabled) { findBtn.disabled = !enabled; }
+// The Find Game button is enabled only when the base intent (signed in, not
+// already in a game) holds AND the player can afford a game. currencyData
+// updates re-apply the gate via refreshFindAvailability().
+let findBtnBaseEnabled = false;
+
+function hasEnoughEnergy() { return state.myEnergy >= GAME_ENERGY_COST; }
+
+function applyFindBtnState() {
+  findBtn.disabled = !(findBtnBaseEnabled && hasEnoughEnergy());
+  findBtn.title = findBtnBaseEnabled && !hasEnoughEnergy()
+    ? `Need ${GAME_ENERGY_COST} energy to play`
+    : '';
+}
+
+export function setFindBtnEnabled(enabled) {
+  findBtnBaseEnabled = enabled;
+  applyFindBtnState();
+}
+
+export function refreshFindAvailability() { applyFindBtnState(); }
 
 findBtn.addEventListener('click', () => {
   if (!state.isAuthenticated) {
     alert('Please sign in with Google first.');
+    return;
+  }
+  if (!hasEnoughEnergy()) {
+    showTopToast(`You need ${GAME_ENERGY_COST} energy to play.`);
     return;
   }
   socket.emit('findGame');
@@ -189,6 +212,10 @@ modalCloseBtn.addEventListener('click', () => {
 });
 
 modalNewGameBtn.addEventListener('click', () => {
+  if (!hasEnoughEnergy()) {
+    showTopToast(`You need ${GAME_ENERGY_COST} energy to play.`);
+    return;
+  }
   hideEndModal();
   state.rematchRequestedByMe = false;
   socket.emit('findGame');

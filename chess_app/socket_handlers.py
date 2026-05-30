@@ -105,8 +105,13 @@ def on_join_waiting_game(payload):
             return
         leave_ended_game(sid)
         remove_from_waiting(sid)
-        if not pair_with(sid, partner_sid):
+        result = pair_with(sid, partner_sid)
+        if result == "unavailable":
             emit("joinFailed", {"reason": "Player is no longer available."})
+            emit("waitingList", {"players": waiting_list_payload(self_sid=sid)})
+            return
+        if result == "failed":
+            # pair_with already told the players why (e.g. not enough energy).
             emit("waitingList", {"players": waiting_list_payload(self_sid=sid)})
             return
     broadcast_waiting_list()

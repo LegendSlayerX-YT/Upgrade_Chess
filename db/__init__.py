@@ -1,4 +1,11 @@
-from db.currency import Currency, award_tokens, change_currency, fetch_currency
+from db.currency import (
+    Currency,
+    award_tokens,
+    change_currency,
+    fetch_currency,
+    grant_energy_to_all,
+    spend_energy_from_pair,
+)
 from db.piece_levels import (
     MAX_LEVEL,
     SLOT_TYPES,
@@ -20,5 +27,7 @@ __all__ = [
     "downgrade_piece",
     "fetch_currency",
     "fetch_levels",
+    "grant_energy_to_all",
+    "spend_energy_from_pair",
     "upgrade_piece",
 ]

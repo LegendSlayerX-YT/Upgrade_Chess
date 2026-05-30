@@ -5,7 +5,7 @@ import chess
 import db
 from chess_app import state
 from chess_app.auth import display_name_for, picture_for
-from chess_app.chess_logic import WIN_REWARD_TOKENS, build_pieces
+from chess_app.chess_logic import GAME_ENERGY_COST, WIN_REWARD_TOKENS, build_pieces
 
 
 def make_game_id():
@@ -61,7 +61,47 @@ def levels_for_sid(sid):
     return {"w": {}, "b": {}}
 
 
+def email_for_sid(sid):
+    return (state.sid_to_user.get(sid) or {}).get("email")
+
+
+def charge_for_game(white_sid, black_sid):
+    """Deduct the per-game energy cost from both players, charging both or
+    neither. On success, emits the refreshed currency to each player and
+    returns True. On failure (not signed in, or insufficient energy), tells
+    both players why and returns False without starting a game."""
+    white_email = email_for_sid(white_sid)
+    black_email = email_for_sid(black_sid)
+    if not white_email or not black_email:
+        for sid in (white_sid, black_sid):
+            state.socketio.emit("joinFailed", {"reason": "Sign in to play."}, to=sid)
+        return False
+    try:
+        charged = db.spend_energy_from_pair(white_email, black_email, GAME_ENERGY_COST)
+    except Exception:
+        for sid in (white_sid, black_sid):
+            state.socketio.emit("joinFailed", {"reason": "Could not start game. Try again."}, to=sid)
+        return False
+    if charged is None:
+        for sid in (white_sid, black_sid):
+            state.socketio.emit(
+                "joinFailed",
+                {"reason": f"Both players need at least {GAME_ENERGY_COST} energy to play."},
+                to=sid,
+            )
+        return False
+    for sid, email in ((white_sid, white_email), (black_sid, black_email)):
+        currency = charged.get(email)
+        if currency:
+            payload = currency.to_dict()
+            payload["found"] = True
+            state.socketio.emit("currencyData", payload, to=sid)
+    return True
+
+
 def start_game(white_sid, black_sid):
+    if not charge_for_game(white_sid, black_sid):
+        return False
     game_id = make_game_id()
     board = chess.Board()
     saved_levels = {
@@ -112,22 +152,26 @@ def start_game(white_sid, black_sid):
         },
         to=black_sid,
     )
+    return True
 
 
 def pair_with(sid, partner_sid):
-    """Pair two specific sids into a game. Returns True if paired."""
+    """Pair two specific sids into a game. Returns one of:
+    'paired'      - a game started,
+    'unavailable' - the partner is no longer waiting/connected,
+    'failed'      - the game could not start (e.g. insufficient energy); the
+                    reason has already been sent to the players."""
     if sid == partner_sid:
-        return False
+        return "unavailable"
     if partner_sid not in state.waiting_players or partner_sid not in state.connected_sids:
-        return False
+        return "unavailable"
+    white_is_partner = secrets.randbelow(2) == 0
+    white_sid, black_sid = (partner_sid, sid) if white_is_partner else (sid, partner_sid)
+    if not start_game(white_sid, black_sid):
+        return "failed"
     state.waiting_players.pop(partner_sid, None)
     state.waiting_players.pop(sid, None)
-    white_is_partner = secrets.randbelow(2) == 0
-    if white_is_partner:
-        start_game(partner_sid, sid)
-    else:
-        start_game(sid, partner_sid)
-    return True
+    return "paired"
 
 
 def award_win_reward(game, winner):

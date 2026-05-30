@@ -4,6 +4,7 @@ import {
   DEFAULT_UPGRADE_COSTS, clampLevel, buildPreviewPieces,
   PIECES_BASE,
 } from './state.js';
+import { refreshFindAvailability } from './ui.js';
 
 const setupGrid = document.getElementById('setupGrid');
 const setupSection = document.getElementById('setup');
@@ -206,6 +207,8 @@ socket.on('currencyData', (data) => {
     blackTokensEl.textContent = '0';
     energyEl.textContent = '0';
     state.myTokens = { w: 0, b: 0 };
+    state.myEnergy = 0;
+    refreshFindAvailability();
     renderSetup();
     return;
   }
@@ -213,6 +216,8 @@ socket.on('currencyData', (data) => {
   blackTokensEl.textContent = data.blackTokens;
   energyEl.textContent = data.energy;
   state.myTokens = { w: data.whiteTokens, b: data.blackTokens };
+  state.myEnergy = data.energy;
+  refreshFindAvailability();
   renderSetup();
 });
 

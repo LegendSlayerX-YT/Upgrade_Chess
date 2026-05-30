@@ -55,6 +55,8 @@ export const SLOT_DEFS = [
   { slot: 'Ph', type: 'p', file: 'h' },
 ];
 
+export const GAME_ENERGY_COST = 5;  // energy required to start a game; mirrors server
+
 export const TYPE_NAME = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
 export const TYPE_FULL = { p: 'Pawn', n: 'Knight', b: 'Bishop', r: 'Rook', q: 'Queen', k: 'King' };
 export const DEFAULT_UPGRADE_COSTS = { p: 1, n: 3, b: 3, r: 5, q: 8 };
@@ -97,6 +99,7 @@ export const state = {
   myLevels: { w: emptyLevels(), b: emptyLevels() },
   upgradeCosts: { ...DEFAULT_UPGRADE_COSTS },
   myTokens: { w: 0, b: 0 },
+  myEnergy: 0,
   pendingUpgrade: null,
   activeSide: 'w',
   altMode: false,

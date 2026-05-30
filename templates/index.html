@@ -5,8 +5,8 @@
 <title>Upgrade Chess</title>
 <link rel="stylesheet"
       href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
-<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
-<script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=asset_version) }}" />
+<script type="module" src="{{ url_for('static', filename='app.js', v=asset_version) }}"></script>
 <script src="https://accounts.google.com/gsi/client" defer></script>
 <meta name="google-client-id" content="{{ google_client_id }}" />
 </head>
