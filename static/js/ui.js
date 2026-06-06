@@ -1,4 +1,7 @@
-import { socket, state, FALLBACK_AVATAR, TYPE_FULL, PIECES_BASE, GAME_ENERGY_COST } from './state.js';
+import {
+  socket, state, FALLBACK_AVATAR, PIECES_BASE, GAME_ENERGY_COST,
+  SLOT_DEFS, TYPE_NAME, clampLevel,
+} from './state.js';
 
 // ---------- Top toast ----------
 let topToastTimer = null;
@@ -94,6 +97,80 @@ const findModalCloseBtn = document.getElementById('findModalCloseBtn');
 const findModalMessage = document.getElementById('findModalMessage');
 const waitingPlayersListEl = document.getElementById('waitingPlayersList');
 const createWaitingBtn = document.getElementById('createWaitingBtn');
+const waitingPreviewModal = document.getElementById('waitingPreviewModal');
+const waitingPreviewCloseBtn = document.getElementById('waitingPreviewCloseBtn');
+const waitingPreviewAvatar = document.getElementById('waitingPreviewAvatar');
+const waitingPreviewName = document.getElementById('waitingPreviewName');
+const waitingPreviewMessage = document.getElementById('waitingPreviewMessage');
+const waitingPreviewGrid = document.getElementById('waitingPreviewGrid');
+const waitingPreviewTabs = Array.from(document.querySelectorAll('.waiting-preview-tabs .setup-tab'));
+
+let waitingPreviewRequestedSid = null;
+let waitingPreviewPlayer = null;
+let waitingPreviewLevels = null;
+let waitingPreviewSide = 'w';
+
+function waitingPreviewSlotOrder(side) {
+  const pawns = SLOT_DEFS.filter(s => s.type === 'p');
+  const back = SLOT_DEFS.filter(s => s.type !== 'p');
+  return side === 'b'
+    ? [...pawns.slice().reverse(), ...back.slice().reverse()]
+    : [...pawns, ...back];
+}
+
+function renderWaitingPreviewTabs() {
+  waitingPreviewTabs.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.side === waitingPreviewSide);
+  });
+}
+
+function renderWaitingPreviewGrid() {
+  renderWaitingPreviewTabs();
+  if (!waitingPreviewLevels) {
+    waitingPreviewGrid.innerHTML = '';
+    waitingPreviewMessage.textContent = waitingPreviewRequestedSid
+      ? 'Loading piece levels...'
+      : 'No piece data loaded.';
+    return;
+  }
+  waitingPreviewMessage.textContent = 'Click a tab to inspect this player as White or Black.';
+  const sideLevels = waitingPreviewLevels[waitingPreviewSide] || {};
+  waitingPreviewGrid.innerHTML = waitingPreviewSlotOrder(waitingPreviewSide).map(({ slot, type, file }) => {
+    const rank = waitingPreviewSide === 'w'
+      ? (type === 'p' ? '2' : '1')
+      : (type === 'p' ? '7' : '8');
+    const level = clampLevel(sideLevels[slot] ?? 1);
+    return `
+      <div class="waiting-preview-cell${type === 'k' ? ' locked' : ''}">
+        <img src="${PIECES_BASE}/${waitingPreviewSide}${TYPE_NAME[type]}.png" alt="${slot}" />
+        <div class="slot-label">${file}${rank}</div>
+        <div class="slot-level">Lv ${level}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function showWaitingPreview({ sid, name, picture }) {
+  waitingPreviewRequestedSid = sid;
+  waitingPreviewPlayer = { name: name || 'Player', picture: picture || FALLBACK_AVATAR };
+  waitingPreviewLevels = null;
+  waitingPreviewSide = 'w';
+  waitingPreviewAvatar.src = waitingPreviewPlayer.picture;
+  waitingPreviewAvatar.onerror = () => { waitingPreviewAvatar.onerror = null; waitingPreviewAvatar.src = FALLBACK_AVATAR; };
+  waitingPreviewName.textContent = waitingPreviewPlayer.name;
+  waitingPreviewModal.classList.add('on');
+  renderWaitingPreviewGrid();
+}
+
+function hideWaitingPreview() {
+  waitingPreviewModal.classList.remove('on');
+  waitingPreviewRequestedSid = null;
+  waitingPreviewPlayer = null;
+  waitingPreviewLevels = null;
+  waitingPreviewSide = 'w';
+  waitingPreviewGrid.innerHTML = '';
+  waitingPreviewMessage.textContent = '';
+}
 
 export function renderWaitingList(players) {
   if (!players || players.length === 0) {
@@ -102,7 +179,13 @@ export function renderWaitingList(players) {
   }
   waitingPlayersListEl.innerHTML = players.map(p => `
     <div class="waiting-row${p.is_self ? ' is-self' : ''}" data-sid="${p.sid}"${p.is_self ? ' data-self="1"' : ''}>
-      <img src="${p.picture || FALLBACK_AVATAR}" alt="" onerror="this.onerror=null;this.src='${FALLBACK_AVATAR}'" />
+      ${p.is_self ? `
+        <img src="${p.picture || FALLBACK_AVATAR}" alt="" onerror="this.onerror=null;this.src='${FALLBACK_AVATAR}'" />
+      ` : `
+        <button type="button" class="waiting-avatar-btn" title="View piece levels" aria-label="View piece levels">
+          <img src="${p.picture || FALLBACK_AVATAR}" alt="" onerror="this.onerror=null;this.src='${FALLBACK_AVATAR}'" />
+        </button>
+      `}
       <div class="waiting-name">${(p.name || 'Player').replace(/</g, '&lt;')}</div>
       ${p.is_self ? '<div class="waiting-self-tag">self</div>' : '<div class="waiting-join">Join →</div>'}
     </div>
@@ -112,14 +195,17 @@ export function renderWaitingList(players) {
 export function showFindModal() {
   findModal.classList.add('on');
   if (state.imWaiting) {
-    findModalMessage.textContent = 'You are waiting for an opponent. Others can join you, or pick one below.';
+    findModalMessage.textContent = 'You are waiting for an opponent. Others can join you, or pick one below. Click an avatar to inspect piece levels.';
     createWaitingBtn.style.display = 'none';
   } else {
-    findModalMessage.textContent = 'Players waiting for an opponent:';
+    findModalMessage.textContent = 'Players waiting for an opponent. Click a row to join, or an avatar to inspect piece levels.';
     createWaitingBtn.style.display = '';
   }
 }
-export function hideFindModal() { findModal.classList.remove('on'); }
+export function hideFindModal() {
+  findModal.classList.remove('on');
+  hideWaitingPreview();
+}
 export function isFindModalOpen() { return findModal.classList.contains('on'); }
 // The Find Game button is enabled only when the base intent (signed in, not
 // already in a game) holds AND the player can afford a game. currencyData
@@ -155,6 +241,22 @@ findBtn.addEventListener('click', () => {
 });
 
 waitingPlayersListEl.addEventListener('click', (e) => {
+  const avatarBtn = e.target.closest('.waiting-avatar-btn');
+  if (avatarBtn) {
+    const row = avatarBtn.closest('.waiting-row');
+    if (!row || row.dataset.self) return;
+    const partnerSid = row.dataset.sid;
+    if (!partnerSid) return;
+    const name = row.querySelector('.waiting-name')?.textContent?.trim() || 'Player';
+    const avatar = avatarBtn.querySelector('img');
+    showWaitingPreview({
+      sid: partnerSid,
+      name,
+      picture: avatar?.currentSrc || avatar?.src || FALLBACK_AVATAR,
+    });
+    socket.emit('fetchWaitingPlayerLevels', { sid: partnerSid });
+    return;
+  }
   const row = e.target.closest('.waiting-row');
   if (!row) return;
   if (row.dataset.self) return;
@@ -172,6 +274,38 @@ findModalCloseBtn.addEventListener('click', () => {
   if (state.imWaiting) {
     socket.emit('cancelWaiting');
   }
+});
+
+waitingPreviewCloseBtn.addEventListener('click', () => {
+  hideWaitingPreview();
+});
+
+waitingPreviewTabs.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const side = btn.dataset.side;
+    if (side !== 'w' && side !== 'b') return;
+    waitingPreviewSide = side;
+    renderWaitingPreviewGrid();
+  });
+});
+
+socket.on('waitingPlayerLevels', ({ sid, name, picture, levels }) => {
+  if (!waitingPreviewRequestedSid || sid !== waitingPreviewRequestedSid) return;
+  waitingPreviewRequestedSid = null;
+  waitingPreviewPlayer = {
+    name: name || waitingPreviewPlayer?.name || 'Player',
+    picture: picture || waitingPreviewPlayer?.picture || FALLBACK_AVATAR,
+  };
+  waitingPreviewAvatar.src = waitingPreviewPlayer.picture;
+  waitingPreviewName.textContent = waitingPreviewPlayer.name;
+  waitingPreviewLevels = levels && typeof levels === 'object' ? levels : { w: {}, b: {} };
+  renderWaitingPreviewGrid();
+});
+
+socket.on('waitingPlayerLevelsError', ({ sid, reason }) => {
+  if (sid && waitingPreviewRequestedSid && sid !== waitingPreviewRequestedSid) return;
+  hideWaitingPreview();
+  showTopToast(reason || 'Could not load piece levels.');
 });
 
 // ---------- End-game modal ----------

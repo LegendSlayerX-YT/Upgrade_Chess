@@ -12,6 +12,7 @@ from chess_app.rooms import (
     broadcast_waiting_list,
     end_game,
     leave_ended_game,
+    levels_for_sid,
     pair_with,
     remove_from_waiting,
     start_game,
@@ -106,6 +107,10 @@ def on_join_waiting_game(payload):
         leave_ended_game(sid)
         remove_from_waiting(sid)
         result = pair_with(sid, partner_sid)
+        if result == "self":
+            emit("joinFailed", {"reason": "You cannot play against yourself."})
+            emit("waitingList", {"players": waiting_list_payload(self_sid=sid)})
+            return
         if result == "unavailable":
             emit("joinFailed", {"reason": "Player is no longer available."})
             emit("waitingList", {"players": waiting_list_payload(self_sid=sid)})
@@ -142,6 +147,40 @@ def on_fetch_levels():
         emit("levelsError", {"reason": str(e)})
         return
     emit("levelsData", {"levels": levels, "costs": db.UPGRADE_BASE_COST})
+
+
+@socketio.on("fetchWaitingPlayerLevels")
+def on_fetch_waiting_player_levels(payload):
+    sid = request.sid
+    target_sid = (payload or {}).get("sid") if isinstance(payload, dict) else None
+    if not target_sid:
+        emit("waitingPlayerLevelsError", {"reason": "missing player", "sid": None})
+        return
+
+    with state.state_lock:
+        if sid not in state.sid_to_user:
+            emit("waitingPlayerLevelsError", {"reason": "login required", "sid": target_sid})
+            return
+        waiting_player = state.waiting_players.get(target_sid)
+        if not waiting_player or target_sid not in state.connected_sids:
+            emit(
+                "waitingPlayerLevelsError",
+                {"reason": "Player is no longer available.", "sid": target_sid},
+            )
+            return
+        name = waiting_player.get("name") or "Player"
+        picture = waiting_player.get("picture")
+
+    levels = levels_for_sid(target_sid)
+    emit(
+        "waitingPlayerLevels",
+        {
+            "sid": target_sid,
+            "name": name,
+            "picture": picture,
+            "levels": levels,
+        },
+    )
 
 
 @socketio.on("upgradePiece")

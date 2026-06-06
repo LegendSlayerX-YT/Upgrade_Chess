@@ -590,6 +590,24 @@ button:disabled { opacity: 0.5; cursor: default; }
   background: #d6dae5;
   flex: 0 0 auto;
 }
+.waiting-avatar-btn {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.waiting-avatar-btn:hover img {
+  box-shadow: 0 0 0 3px rgba(74, 108, 212, 0.22);
+}
+.waiting-avatar-btn:focus-visible {
+  outline: 2px solid #4a6cd4;
+  outline-offset: 2px;
+}
 .waiting-row .waiting-name {
   flex: 1 1 auto;
   font-size: 14px;
@@ -615,6 +633,80 @@ button:disabled { opacity: 0.5; cursor: default; }
   border-radius: 10px;
   text-transform: lowercase;
   letter-spacing: 0.3px;
+}
+
+.waiting-preview-modal {
+  width: min(560px, calc(100vw - 24px));
+  text-align: left;
+}
+.waiting-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.waiting-preview-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #d6dae5;
+  flex: 0 0 auto;
+}
+.waiting-preview-meta {
+  min-width: 0;
+}
+.waiting-preview-meta h2 {
+  margin: 0 0 4px;
+  font-size: 21px;
+}
+.waiting-preview-name {
+  margin: 0;
+  color: #555;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.waiting-preview-tabs {
+  margin-bottom: 10px;
+}
+.waiting-preview-message {
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.waiting-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+}
+.waiting-preview-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 2px;
+  background: #f8f9fc;
+  border: 1px solid #e1e4ea;
+  border-radius: 6px;
+}
+.waiting-preview-cell img {
+  width: 32px;
+  height: 32px;
+}
+.waiting-preview-cell.locked img {
+  opacity: 0.7;
+}
+.waiting-preview-cell .slot-label {
+  font-size: 10px;
+  color: #666;
+  margin-top: 2px;
+}
+.waiting-preview-cell .slot-level {
+  font-size: 11px;
+  color: #333;
+  margin-top: 2px;
+  font-weight: 600;
 }
 
 .promo-choices { display: flex; gap: 8px; }

@@ -128,6 +128,25 @@
     </div>
   </div>
 
+  <div id="waitingPreviewModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="waitingPreviewTitle">
+    <div class="modal waiting-preview-modal">
+      <button class="modal-close" id="waitingPreviewCloseBtn" aria-label="Close">&times;</button>
+      <div class="waiting-preview-header">
+        <img class="waiting-preview-avatar" id="waitingPreviewAvatar" alt="" />
+        <div class="waiting-preview-meta">
+          <h2 id="waitingPreviewTitle">Piece Levels</h2>
+          <p class="waiting-preview-name" id="waitingPreviewName"></p>
+        </div>
+      </div>
+      <div class="setup-tabs waiting-preview-tabs">
+        <button class="setup-tab active" type="button" data-side="w">As White</button>
+        <button class="setup-tab" type="button" data-side="b">As Black</button>
+      </div>
+      <p class="modal-message waiting-preview-message" id="waitingPreviewMessage"></p>
+      <div id="waitingPreviewGrid" class="waiting-preview-grid"></div>
+    </div>
+  </div>
+
   <div id="endModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal">
       <button class="modal-close" id="modalCloseBtn" aria-label="Close">&times;</button>

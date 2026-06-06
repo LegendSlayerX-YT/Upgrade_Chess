@@ -12,13 +12,28 @@ def make_game_id():
     return secrets.token_hex(4)
 
 
+def player_identity_for_sid(sid):
+    user = state.sid_to_user.get(sid) or {}
+    return user.get("sub") or user.get("email")
+
+
+def same_person(a_sid, b_sid):
+    if not a_sid or not b_sid:
+        return False
+    if a_sid == b_sid:
+        return True
+    a_identity = player_identity_for_sid(a_sid)
+    b_identity = player_identity_for_sid(b_sid)
+    return bool(a_identity and b_identity and a_identity == b_identity)
+
+
 def waiting_list_payload(self_sid=None):
     return [
         {
             "sid": sid,
             "name": info.get("name") or "Player",
             "picture": info.get("picture"),
-            "is_self": sid == self_sid,
+            "is_self": same_person(sid, self_sid),
         }
         for sid, info in state.waiting_players.items()
     ]
@@ -100,6 +115,18 @@ def charge_for_game(white_sid, black_sid):
 
 
 def start_game(white_sid, black_sid):
+    if same_person(white_sid, black_sid):
+        seen = set()
+        for sid in (white_sid, black_sid):
+            if sid in seen:
+                continue
+            seen.add(sid)
+            state.socketio.emit(
+                "joinFailed",
+                {"reason": "You cannot play against yourself."},
+                to=sid,
+            )
+        return False
     if not charge_for_game(white_sid, black_sid):
         return False
     game_id = make_game_id()
@@ -158,11 +185,12 @@ def start_game(white_sid, black_sid):
 def pair_with(sid, partner_sid):
     """Pair two specific sids into a game. Returns one of:
     'paired'      - a game started,
+    'self'        - the partner is the same signed-in person,
     'unavailable' - the partner is no longer waiting/connected,
     'failed'      - the game could not start (e.g. insufficient energy); the
                     reason has already been sent to the players."""
-    if sid == partner_sid:
-        return "unavailable"
+    if same_person(sid, partner_sid):
+        return "self"
     if partner_sid not in state.waiting_players or partner_sid not in state.connected_sids:
         return "unavailable"
     white_is_partner = secrets.randbelow(2) == 0
