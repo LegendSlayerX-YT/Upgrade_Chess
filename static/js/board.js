@@ -327,6 +327,7 @@ export function endGame(payload) {
     default: msg = 'Game over.';
   }
   showEndModal(msg, { disconnect: payload.type === 'disconnect' });
+  if (state.isAuthenticated) socket.emit('fetchCurrency');
 }
 
 // ---------- Socket handlers ----------

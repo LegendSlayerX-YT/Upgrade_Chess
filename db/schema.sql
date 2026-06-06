@@ -42,6 +42,25 @@ BEGIN
     END IF;
 END$$;
 
+-- Normalize any pre-existing out-of-range energy before enforcing bounds.
+UPDATE players.currency_data
+SET energy = LEAST(50, GREATEST(0, energy))
+WHERE energy < 0 OR energy > 50;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'players.currency_data'::regclass
+          AND conname = 'currency_data_energy_bounds'
+    ) THEN
+        ALTER TABLE players.currency_data
+            ADD CONSTRAINT currency_data_energy_bounds
+            CHECK (energy >= 0 AND energy <= 50);
+    END IF;
+END$$;
+
 CREATE TABLE IF NOT EXISTS players.piece_levels (
     email  TEXT    NOT NULL,
     color  CHAR(1) NOT NULL CHECK (color IN ('w', 'b')),

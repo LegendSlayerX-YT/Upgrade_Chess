@@ -1,7 +1,6 @@
 from db.currency import (
     Currency,
     award_tokens,
-    change_currency,
     fetch_currency,
     spend_energy_from_pair,
 )
@@ -22,7 +21,6 @@ __all__ = [
     "UPGRADE_BASE_COST",
     "UpgradeResult",
     "award_tokens",
-    "change_currency",
     "downgrade_piece",
     "fetch_currency",
     "fetch_levels",

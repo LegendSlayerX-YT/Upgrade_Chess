@@ -17,10 +17,14 @@ ENERGY_MAX = 50  # hard cap; regen and grants never push energy above this
 # UPDATE; the rate and cap are trusted integer constants, so inlining them
 # carries no injection risk.
 _SETTLE_ENERGY = (
-    f"energy = LEAST({ENERGY_MAX}, energy + "
-    "EXTRACT(EPOCH FROM (now() - energy_updated_at)) "
-    f"/ 3600.0 * {ENERGY_REGEN_PER_HOUR}), "
-    "energy_updated_at = now()"
+    f"""
+    energy = LEAST(
+        {ENERGY_MAX}, 
+        energy 
+            + EXTRACT(EPOCH FROM (now() - energy_updated_at)) / 3600.0 * {ENERGY_REGEN_PER_HOUR}
+    ),
+    energy_updated_at = now()
+    """
 )
 
 
@@ -94,29 +98,6 @@ def fetch_currency(email: str) -> Optional[Currency]:
                 RETURNING email, white_tokens, black_tokens, energy, energy_updated_at
                 """,
                 (email,),
-            )
-            row = cur.fetchone()
-    return _row_to_currency(row) if row else None
-
-
-def change_currency(
-    email: str,
-    white_tokens_delta: int,
-    black_tokens_delta: int,
-    energy_delta: int,
-) -> Optional[Currency]:
-    with connect() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                f"""
-                UPDATE players.currency_data
-                SET white_tokens = white_tokens + %s,
-                    black_tokens = black_tokens + %s,
-                    energy = LEAST({ENERGY_MAX}, energy + %s)
-                WHERE email = %s
-                RETURNING email, white_tokens, black_tokens, energy
-                """,
-                (white_tokens_delta, black_tokens_delta, energy_delta, email),
             )
             row = cur.fetchone()
     return _row_to_currency(row) if row else None
