@@ -46,7 +46,6 @@ google_request = google_requests.Request()
 waiting_players = {}  # sid -> {"name": str, "picture": str|None}
 games = {}
 sid_to_game = {}
-pending_levels = {}
 connected_sids = set()
 sid_to_user = {}
 state_lock = threading.RLock()

@@ -608,14 +608,29 @@ button:disabled { opacity: 0.5; cursor: default; }
   outline: 2px solid #4a6cd4;
   outline-offset: 2px;
 }
-.waiting-row .waiting-name {
+.waiting-meta {
   flex: 1 1 auto;
+  min-width: 0;
+}
+.waiting-row .waiting-name {
   font-size: 14px;
   font-weight: 500;
   color: #222;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.waiting-row .waiting-mode {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.waiting-row .waiting-mode.is-regular {
+  color: #687286;
+}
+.waiting-row .waiting-mode.is-fair {
+  color: #1a7f52;
 }
 .waiting-row .waiting-join {
   font-size: 12px;

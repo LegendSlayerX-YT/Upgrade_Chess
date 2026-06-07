@@ -5,7 +5,12 @@ import chess
 import db
 from chess_app import state
 from chess_app.auth import display_name_for, picture_for
-from chess_app.chess_logic import GAME_ENERGY_COST, WIN_REWARD_TOKENS, build_pieces
+from chess_app.chess_logic import (
+    FAIR_GAME_WIN_REWARD_TOKENS,
+    GAME_ENERGY_COST,
+    WIN_REWARD_TOKENS,
+    build_pieces,
+)
 
 
 def make_game_id():
@@ -33,6 +38,8 @@ def waiting_list_payload(self_sid=None):
             "sid": sid,
             "name": info.get("name") or "Player",
             "picture": info.get("picture"),
+            "fairGame": bool(info.get("fair_game")),
+            "winRewardTokens": win_reward_amount(bool(info.get("fair_game"))),
             "is_self": same_person(sid, self_sid),
         }
         for sid, info in state.waiting_players.items()
@@ -57,11 +64,12 @@ def remove_from_waiting(sid):
     return False
 
 
-def add_to_waiting(sid):
+def add_to_waiting(sid, fair_game=False):
     user = state.sid_to_user.get(sid) or {}
     state.waiting_players[sid] = {
         "name": user.get("name") or "Player",
         "picture": user.get("picture"),
+        "fair_game": bool(fair_game),
     }
 
 
@@ -78,6 +86,27 @@ def levels_for_sid(sid):
 
 def email_for_sid(sid):
     return (state.sid_to_user.get(sid) or {}).get("email")
+
+
+def empty_levels_snapshot():
+    return {"w": {}, "b": {}}
+
+
+def copy_levels_snapshot(levels):
+    snapshot = empty_levels_snapshot()
+    if not isinstance(levels, dict):
+        return snapshot
+    for side in ("w", "b"):
+        side_levels = levels.get(side)
+        if isinstance(side_levels, dict):
+            snapshot[side] = dict(side_levels)
+    return snapshot
+
+
+def win_reward_amount(fair_game=False):
+    if fair_game:
+        return FAIR_GAME_WIN_REWARD_TOKENS
+    return WIN_REWARD_TOKENS
 
 
 def charge_for_game(white_sid, black_sid):
@@ -114,7 +143,7 @@ def charge_for_game(white_sid, black_sid):
     return True
 
 
-def start_game(white_sid, black_sid):
+def start_game(white_sid, black_sid, fair_game=False, levels_by_sid=None):
     if same_person(white_sid, black_sid):
         seen = set()
         for sid in (white_sid, black_sid):
@@ -131,14 +160,23 @@ def start_game(white_sid, black_sid):
         return False
     game_id = make_game_id()
     board = chess.Board()
-    saved_levels = {
-        white_sid: levels_for_sid(white_sid),
-        black_sid: levels_for_sid(black_sid),
-    }
+    if levels_by_sid is not None:
+        saved_levels = {
+            white_sid: copy_levels_snapshot(levels_by_sid.get(white_sid)),
+            black_sid: copy_levels_snapshot(levels_by_sid.get(black_sid)),
+        }
+    elif fair_game:
+        saved_levels = {
+            white_sid: empty_levels_snapshot(),
+            black_sid: empty_levels_snapshot(),
+        }
+    else:
+        saved_levels = {
+            white_sid: levels_for_sid(white_sid),
+            black_sid: levels_for_sid(black_sid),
+        }
     white_side = saved_levels[white_sid].get("w", {})
     black_side = saved_levels[black_sid].get("b", {})
-    state.pending_levels.pop(white_sid, None)
-    state.pending_levels.pop(black_sid, None)
     pieces = build_pieces(white_side, black_side)
     state.games[game_id] = {
         "id": game_id,
@@ -150,6 +188,7 @@ def start_game(white_sid, black_sid):
         "state": "active",
         "rematch_requests": set(),
         "pending_capture": None,
+        "fair_game": bool(fair_game),
         "levels_by_sid": saved_levels,
     }
     state.sid_to_game[white_sid] = game_id
@@ -167,6 +206,8 @@ def start_game(white_sid, black_sid):
             "gameId": game_id, "color": "white", "fen": board.fen(), "pieces": pieces,
             "you": white_name, "opponent": black_name,
             "yourPicture": white_pic, "opponentPicture": black_pic,
+            "fairGame": bool(fair_game),
+            "winRewardTokens": win_reward_amount(bool(fair_game)),
         },
         to=white_sid,
     )
@@ -176,6 +217,8 @@ def start_game(white_sid, black_sid):
             "gameId": game_id, "color": "black", "fen": board.fen(), "pieces": pieces,
             "you": black_name, "opponent": white_name,
             "yourPicture": black_pic, "opponentPicture": white_pic,
+            "fairGame": bool(fair_game),
+            "winRewardTokens": win_reward_amount(bool(fair_game)),
         },
         to=black_sid,
     )
@@ -191,15 +234,21 @@ def pair_with(sid, partner_sid):
                     reason has already been sent to the players."""
     if same_person(sid, partner_sid):
         return "self"
-    if partner_sid not in state.waiting_players or partner_sid not in state.connected_sids:
+    partner_info = state.waiting_players.get(partner_sid)
+    if not partner_info or partner_sid not in state.connected_sids:
         return "unavailable"
     white_is_partner = secrets.randbelow(2) == 0
     white_sid, black_sid = (partner_sid, sid) if white_is_partner else (sid, partner_sid)
-    if not start_game(white_sid, black_sid):
+    fair_game = bool(partner_info.get("fair_game"))
+    if not start_game(white_sid, black_sid, fair_game=fair_game):
         return "failed"
     state.waiting_players.pop(partner_sid, None)
     state.waiting_players.pop(sid, None)
     return "paired"
+
+
+def win_reward_for_game(game):
+    return win_reward_amount(bool(game.get("fair_game")))
 
 
 def award_win_reward(game, winner):
@@ -211,7 +260,7 @@ def award_win_reward(game, winner):
     if not email:
         return
     color = "w" if winner == "white" else "b"
-    currency = db.award_tokens(email, color, WIN_REWARD_TOKENS)
+    currency = db.award_tokens(email, color, win_reward_for_game(game))
     payload = currency.to_dict()
     payload["found"] = True
     state.socketio.emit("currencyData", payload, to=winner_sid)

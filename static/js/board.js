@@ -354,7 +354,7 @@ socket.on('joinFailed', ({ reason }) => {
   alert(reason || 'Could not join that game.');
 });
 
-socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentPicture }) => {
+socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentPicture, fairGame, winRewardTokens }) => {
   state.imWaiting = false;
   hideEndModal();
   hideFindModal();
@@ -368,6 +368,9 @@ socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentP
   setPlayerCard('bottom', youLabel, yourPicture, youColor, meCode);
   state.currentPieces = pieces || {};
   startBoard(fen, color);
+  if (fairGame) {
+    showTopToast(`Fair game: all pieces are level 1. Winner gets ${winRewardTokens ?? 5} tokens.`, 3200);
+  }
 });
 
 socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant }) => {

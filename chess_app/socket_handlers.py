@@ -16,6 +16,7 @@ from chess_app.rooms import (
     pair_with,
     remove_from_waiting,
     start_game,
+    win_reward_amount,
     waiting_list_payload,
 )
 
@@ -80,15 +81,16 @@ def on_find_game(*_):
 
 
 @socketio.on("createWaitingGame")
-def on_create_waiting_game():
+def on_create_waiting_game(payload):
     sid = request.sid
+    fair_game = bool((payload or {}).get("fairGame")) if isinstance(payload, dict) else False
     with state.state_lock:
         if sid not in state.sid_to_user:
             emit("authError", {"reason": "login required"})
             return
         if state.sid_to_game.get(sid):
             return
-        add_to_waiting(sid)
+        add_to_waiting(sid, fair_game=fair_game)
         emit("waiting")
     broadcast_waiting_list()
 
@@ -170,14 +172,17 @@ def on_fetch_waiting_player_levels(payload):
             return
         name = waiting_player.get("name") or "Player"
         picture = waiting_player.get("picture")
+        fair_game = bool(waiting_player.get("fair_game"))
 
-    levels = levels_for_sid(target_sid)
+    levels = {"w": {}, "b": {}} if fair_game else levels_for_sid(target_sid)
     emit(
         "waitingPlayerLevels",
         {
             "sid": target_sid,
             "name": name,
             "picture": picture,
+            "fairGame": fair_game,
+            "winRewardTokens": win_reward_amount(fair_game),
             "levels": levels,
         },
     )
@@ -574,15 +579,17 @@ def on_request_rematch():
             new_white = game["black"]
             new_black = game["white"]
             saved = game.get("levels_by_sid") or {}
-            for s in (new_white, new_black):
-                if s in saved:
-                    state.pending_levels[s] = saved[s]
             state.sid_to_game.pop(game["white"], None)
             state.sid_to_game.pop(game["black"], None)
             socketio.server.leave_room(new_white, game_id, namespace="/")
             socketio.server.leave_room(new_black, game_id, namespace="/")
             state.games.pop(game_id, None)
-            start_game(new_white, new_black)
+            start_game(
+                new_white,
+                new_black,
+                fair_game=bool(game.get("fair_game")),
+                levels_by_sid=saved,
+            )
         else:
             emit("rematchPending")
             socketio.emit("rematchRequested", to=opponent_sid)
@@ -609,7 +616,6 @@ def on_disconnect():
     with state.state_lock:
         state.connected_sids.discard(sid)
         waiting_changed = remove_from_waiting(sid)
-        state.pending_levels.pop(sid, None)
         state.sid_to_user.pop(sid, None)
 
         game_id = state.sid_to_game.get(sid)

@@ -1,6 +1,6 @@
 import {
   socket, state, FALLBACK_AVATAR, PIECES_BASE, GAME_ENERGY_COST,
-  SLOT_DEFS, TYPE_NAME, clampLevel,
+  SLOT_DEFS, TYPE_NAME, TYPE_FULL, clampLevel,
 } from './state.js';
 
 // ---------- Top toast ----------
@@ -97,6 +97,7 @@ const findModalCloseBtn = document.getElementById('findModalCloseBtn');
 const findModalMessage = document.getElementById('findModalMessage');
 const waitingPlayersListEl = document.getElementById('waitingPlayersList');
 const createWaitingBtn = document.getElementById('createWaitingBtn');
+const createFairWaitingBtn = document.getElementById('createFairWaitingBtn');
 const waitingPreviewModal = document.getElementById('waitingPreviewModal');
 const waitingPreviewCloseBtn = document.getElementById('waitingPreviewCloseBtn');
 const waitingPreviewAvatar = document.getElementById('waitingPreviewAvatar');
@@ -109,6 +110,8 @@ let waitingPreviewRequestedSid = null;
 let waitingPreviewPlayer = null;
 let waitingPreviewLevels = null;
 let waitingPreviewSide = 'w';
+let waitingPreviewFairGame = false;
+let waitingPreviewRewardTokens = null;
 
 function waitingPreviewSlotOrder(side) {
   const pawns = SLOT_DEFS.filter(s => s.type === 'p');
@@ -129,11 +132,13 @@ function renderWaitingPreviewGrid() {
   if (!waitingPreviewLevels) {
     waitingPreviewGrid.innerHTML = '';
     waitingPreviewMessage.textContent = waitingPreviewRequestedSid
-      ? 'Loading piece levels...'
+      ? (waitingPreviewFairGame ? 'Loading fair-game setup...' : 'Loading piece levels...')
       : 'No piece data loaded.';
     return;
   }
-  waitingPreviewMessage.textContent = 'Click a tab to inspect this player as White or Black.';
+  waitingPreviewMessage.textContent = waitingPreviewFairGame
+    ? `Fair game: all pieces start at level 1 for both players. Winner gets ${waitingPreviewRewardTokens ?? 5} tokens.`
+    : `Click a tab to inspect this player as White or Black. Winner gets ${waitingPreviewRewardTokens ?? 10} tokens.`;
   const sideLevels = waitingPreviewLevels[waitingPreviewSide] || {};
   waitingPreviewGrid.innerHTML = waitingPreviewSlotOrder(waitingPreviewSide).map(({ slot, type, file }) => {
     const rank = waitingPreviewSide === 'w'
@@ -150,11 +155,13 @@ function renderWaitingPreviewGrid() {
   }).join('');
 }
 
-function showWaitingPreview({ sid, name, picture }) {
+function showWaitingPreview({ sid, name, picture, fairGame, winRewardTokens }) {
   waitingPreviewRequestedSid = sid;
   waitingPreviewPlayer = { name: name || 'Player', picture: picture || FALLBACK_AVATAR };
   waitingPreviewLevels = null;
   waitingPreviewSide = 'w';
+  waitingPreviewFairGame = !!fairGame;
+  waitingPreviewRewardTokens = winRewardTokens ?? null;
   waitingPreviewAvatar.src = waitingPreviewPlayer.picture;
   waitingPreviewAvatar.onerror = () => { waitingPreviewAvatar.onerror = null; waitingPreviewAvatar.src = FALLBACK_AVATAR; };
   waitingPreviewName.textContent = waitingPreviewPlayer.name;
@@ -168,17 +175,19 @@ function hideWaitingPreview() {
   waitingPreviewPlayer = null;
   waitingPreviewLevels = null;
   waitingPreviewSide = 'w';
+  waitingPreviewFairGame = false;
+  waitingPreviewRewardTokens = null;
   waitingPreviewGrid.innerHTML = '';
   waitingPreviewMessage.textContent = '';
 }
 
 export function renderWaitingList(players) {
   if (!players || players.length === 0) {
-    waitingPlayersListEl.innerHTML = '<div class="waiting-list-empty">No players waiting. Create a new game to wait for an opponent.</div>';
+    waitingPlayersListEl.innerHTML = '<div class="waiting-list-empty">No players waiting. Create a regular or fair game to wait for an opponent.</div>';
     return;
   }
   waitingPlayersListEl.innerHTML = players.map(p => `
-    <div class="waiting-row${p.is_self ? ' is-self' : ''}" data-sid="${p.sid}"${p.is_self ? ' data-self="1"' : ''}>
+    <div class="waiting-row${p.is_self ? ' is-self' : ''}" data-sid="${p.sid}" data-fair-game="${p.fairGame ? '1' : '0'}" data-win-reward-tokens="${p.winRewardTokens ?? ''}"${p.is_self ? ' data-self="1"' : ''}>
       ${p.is_self ? `
         <img src="${p.picture || FALLBACK_AVATAR}" alt="" onerror="this.onerror=null;this.src='${FALLBACK_AVATAR}'" />
       ` : `
@@ -186,7 +195,14 @@ export function renderWaitingList(players) {
           <img src="${p.picture || FALLBACK_AVATAR}" alt="" onerror="this.onerror=null;this.src='${FALLBACK_AVATAR}'" />
         </button>
       `}
-      <div class="waiting-name">${(p.name || 'Player').replace(/</g, '&lt;')}</div>
+      <div class="waiting-meta">
+        <div class="waiting-name">${(p.name || 'Player').replace(/</g, '&lt;')}</div>
+        <div class="waiting-mode ${p.fairGame ? 'is-fair' : 'is-regular'}">
+          ${p.fairGame
+            ? `Fair game &middot; all pieces Lv 1 &middot; ${p.winRewardTokens} token win`
+            : `Regular game &middot; saved levels &middot; ${p.winRewardTokens} token win`}
+        </div>
+      </div>
       ${p.is_self ? '<div class="waiting-self-tag">self</div>' : '<div class="waiting-join">Join →</div>'}
     </div>
   `).join('');
@@ -195,11 +211,13 @@ export function renderWaitingList(players) {
 export function showFindModal() {
   findModal.classList.add('on');
   if (state.imWaiting) {
-    findModalMessage.textContent = 'You are waiting for an opponent. Others can join you, or pick one below. Click an avatar to inspect piece levels.';
+    findModalMessage.textContent = 'You are waiting for an opponent. Others can join you, or pick one below. Fair games use all level 1 pieces.';
     createWaitingBtn.style.display = 'none';
+    createFairWaitingBtn.style.display = 'none';
   } else {
-    findModalMessage.textContent = 'Players waiting for an opponent. Click a row to join, or an avatar to inspect piece levels.';
+    findModalMessage.textContent = 'Players waiting for an opponent. Click a row to join, or an avatar to inspect the setup. Fair games use all level 1 pieces.';
     createWaitingBtn.style.display = '';
+    createFairWaitingBtn.style.display = '';
   }
 }
 export function hideFindModal() {
@@ -253,6 +271,8 @@ waitingPlayersListEl.addEventListener('click', (e) => {
       sid: partnerSid,
       name,
       picture: avatar?.currentSrc || avatar?.src || FALLBACK_AVATAR,
+      fairGame: row.dataset.fairGame === '1',
+      winRewardTokens: Number(row.dataset.winRewardTokens) || null,
     });
     socket.emit('fetchWaitingPlayerLevels', { sid: partnerSid });
     return;
@@ -266,7 +286,11 @@ waitingPlayersListEl.addEventListener('click', (e) => {
 });
 
 createWaitingBtn.addEventListener('click', () => {
-  socket.emit('createWaitingGame');
+  socket.emit('createWaitingGame', { fairGame: false });
+});
+
+createFairWaitingBtn.addEventListener('click', () => {
+  socket.emit('createWaitingGame', { fairGame: true });
 });
 
 findModalCloseBtn.addEventListener('click', () => {
@@ -289,13 +313,15 @@ waitingPreviewTabs.forEach(btn => {
   });
 });
 
-socket.on('waitingPlayerLevels', ({ sid, name, picture, levels }) => {
+socket.on('waitingPlayerLevels', ({ sid, name, picture, levels, fairGame, winRewardTokens }) => {
   if (!waitingPreviewRequestedSid || sid !== waitingPreviewRequestedSid) return;
   waitingPreviewRequestedSid = null;
   waitingPreviewPlayer = {
     name: name || waitingPreviewPlayer?.name || 'Player',
     picture: picture || waitingPreviewPlayer?.picture || FALLBACK_AVATAR,
   };
+  waitingPreviewFairGame = !!fairGame;
+  waitingPreviewRewardTokens = Number(winRewardTokens) || null;
   waitingPreviewAvatar.src = waitingPreviewPlayer.picture;
   waitingPreviewName.textContent = waitingPreviewPlayer.name;
   waitingPreviewLevels = levels && typeof levels === 'object' ? levels : { w: {}, b: {} };

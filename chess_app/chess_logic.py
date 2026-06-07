@@ -22,6 +22,7 @@ SLOT_TO_START_SQUARE = {
 SLOT_TYPES = db.SLOT_TYPES
 
 WIN_REWARD_TOKENS = 10
+FAIR_GAME_WIN_REWARD_TOKENS = 5
 
 # Energy each player must pay to start a game (matchmaking or rematch).
 GAME_ENERGY_COST = 5
