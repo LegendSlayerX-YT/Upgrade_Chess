@@ -242,7 +242,22 @@ button:disabled { opacity: 0.5; cursor: default; }
 .modal h2 { margin: 0 0 8px; font-size: 22px; }
 .modal-message { color: #444; margin: 0 0 16px; }
 .modal-sub { font-size: 13px; color: #666; margin: 12px 0 0; min-height: 1.2em; }
-.modal-buttons { display: flex; gap: 10px; justify-content: center; }
+.modal-buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.queue-options {
+  display: flex;
+  justify-content: center;
+  margin: -4px 0 14px;
+}
+.queue-toggle {
+  min-width: 130px;
+  background: #f3f4f8;
+  color: #555;
+}
+.queue-toggle.is-on {
+  background: #f2e6bd;
+  color: #6a4700;
+  border-color: #d2b25c;
+}
 .modal-close {
   position: absolute; top: 6px; right: 8px;
   background: transparent; border: none;
@@ -631,6 +646,12 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .waiting-row .waiting-mode.is-fair {
   color: #1a7f52;
+}
+.waiting-row .waiting-mode.is-fair-unrated {
+  color: #7a5a00;
+}
+.waiting-row .waiting-mode.is-unrated {
+  color: #8a5a00;
 }
 .waiting-row .waiting-join {
   font-size: 12px;

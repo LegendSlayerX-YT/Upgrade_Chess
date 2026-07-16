@@ -15,6 +15,13 @@ import {
   renderSetup, renderStats, refreshPreviewPieces, showSetup, showStats,
 } from './setup.js';
 
+function describeGameMode(fairGame = false, unrated = false) {
+  if (fairGame && unrated) return 'fair-unrated';
+  if (fairGame) return 'fair';
+  if (unrated) return 'unrated';
+  return 'regular';
+}
+
 function clearMoveHighlights() {
   document.querySelectorAll('#board .square-55d63').forEach(sq => {
     sq.classList.remove('highlight-move', 'highlight-capture');
@@ -354,7 +361,7 @@ socket.on('joinFailed', ({ reason }) => {
   alert(reason || 'Could not join that game.');
 });
 
-socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentPicture, fairGame, winRewardTokens }) => {
+socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentPicture, fairGame, unrated, winRewardTokens }) => {
   state.imWaiting = false;
   hideEndModal();
   hideFindModal();
@@ -364,12 +371,17 @@ socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentP
   const oppColor = color === 'white' ? 'Black' : 'White';
   const meCode = color === 'white' ? 'w' : 'b';
   const oppCode = meCode === 'w' ? 'b' : 'w';
+  state.currentGameMode = describeGameMode(!!fairGame, !!unrated);
   setPlayerCard('top', oppLabel, opponentPicture, oppColor, oppCode);
   setPlayerCard('bottom', youLabel, yourPicture, youColor, meCode);
   state.currentPieces = pieces || {};
   startBoard(fen, color);
-  if (fairGame) {
+  if (state.currentGameMode === 'fair') {
     showTopToast(`Fair game: all pieces are level 1. Winner gets ${winRewardTokens ?? 5} tokens.`, 3200);
+  } else if (state.currentGameMode === 'fair-unrated') {
+    showTopToast('Fair unrated game: all pieces are level 1, with no energy cost and no token reward.', 3200);
+  } else if (state.currentGameMode === 'unrated') {
+    showTopToast('Unrated game: saved levels, no energy cost, no token reward.', 3200);
   }
 });
 

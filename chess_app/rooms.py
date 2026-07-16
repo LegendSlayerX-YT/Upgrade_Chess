@@ -22,6 +22,31 @@ def player_identity_for_sid(sid):
     return user.get("sub") or user.get("email")
 
 
+def normalize_game_options(*, fair_game=False, unrated=False, game_mode=None):
+    fair = bool(fair_game)
+    unrate = bool(unrated)
+    if game_mode == "fair":
+        fair = True
+    elif game_mode == "unrated":
+        unrate = True
+    return fair, unrate
+
+
+def describe_game_mode(fair_game=False, unrated=False):
+    fair, unrate = normalize_game_options(fair_game=fair_game, unrated=unrated)
+    if fair and unrate:
+        return "fair-unrated"
+    if fair:
+        return "fair"
+    if unrate:
+        return "unrated"
+    return "regular"
+
+
+def uses_energy(unrated=False):
+    return not bool(unrated)
+
+
 def same_person(a_sid, b_sid):
     if not a_sid or not b_sid:
         return False
@@ -33,17 +58,26 @@ def same_person(a_sid, b_sid):
 
 
 def waiting_list_payload(self_sid=None):
-    return [
-        {
-            "sid": sid,
-            "name": info.get("name") or "Player",
-            "picture": info.get("picture"),
-            "fairGame": bool(info.get("fair_game")),
-            "winRewardTokens": win_reward_amount(bool(info.get("fair_game"))),
-            "is_self": same_person(sid, self_sid),
-        }
-        for sid, info in state.waiting_players.items()
-    ]
+    payload = []
+    for sid, info in state.waiting_players.items():
+        fair_game, unrated = normalize_game_options(
+            game_mode=info.get("game_mode"),
+            fair_game=bool(info.get("fair_game")),
+            unrated=bool(info.get("unrated")),
+        )
+        payload.append(
+            {
+                "sid": sid,
+                "name": info.get("name") or "Player",
+                "picture": info.get("picture"),
+                "gameMode": describe_game_mode(fair_game, unrated),
+                "fairGame": fair_game,
+                "unrated": unrated,
+                "winRewardTokens": win_reward_amount(fair_game=fair_game, unrated=unrated),
+                "is_self": same_person(sid, self_sid),
+            }
+        )
+    return payload
 
 
 def broadcast_waiting_list():
@@ -64,12 +98,19 @@ def remove_from_waiting(sid):
     return False
 
 
-def add_to_waiting(sid, fair_game=False):
+def add_to_waiting(sid, fair_game=False, unrated=False, game_mode=None):
     user = state.sid_to_user.get(sid) or {}
+    fair, unrate = normalize_game_options(
+        fair_game=fair_game,
+        unrated=unrated,
+        game_mode=game_mode,
+    )
     state.waiting_players[sid] = {
         "name": user.get("name") or "Player",
         "picture": user.get("picture"),
-        "fair_game": bool(fair_game),
+        "game_mode": describe_game_mode(fair, unrate),
+        "fair_game": fair,
+        "unrated": unrate,
     }
 
 
@@ -103,13 +144,20 @@ def copy_levels_snapshot(levels):
     return snapshot
 
 
-def win_reward_amount(fair_game=False):
-    if fair_game:
+def win_reward_amount(fair_game=False, unrated=False, game_mode=None):
+    fair, unrate = normalize_game_options(
+        fair_game=fair_game,
+        unrated=unrated,
+        game_mode=game_mode,
+    )
+    if unrate:
+        return 0
+    if fair:
         return FAIR_GAME_WIN_REWARD_TOKENS
     return WIN_REWARD_TOKENS
 
 
-def charge_for_game(white_sid, black_sid):
+def charge_for_game(white_sid, black_sid, unrated=False):
     """Deduct the per-game energy cost from both players, charging both or
     neither. On success, emits the refreshed currency to each player and
     returns True. On failure (not signed in, or insufficient energy), tells
@@ -120,6 +168,8 @@ def charge_for_game(white_sid, black_sid):
         for sid in (white_sid, black_sid):
             state.socketio.emit("joinFailed", {"reason": "Sign in to play."}, to=sid)
         return False
+    if not uses_energy(unrated):
+        return True
     try:
         charged = db.spend_energy_from_pair(white_email, black_email, GAME_ENERGY_COST)
     except Exception:
@@ -143,7 +193,19 @@ def charge_for_game(white_sid, black_sid):
     return True
 
 
-def start_game(white_sid, black_sid, fair_game=False, levels_by_sid=None):
+def start_game(
+    white_sid,
+    black_sid,
+    fair_game=False,
+    unrated=False,
+    game_mode=None,
+    levels_by_sid=None,
+):
+    fair, unrate = normalize_game_options(
+        fair_game=fair_game,
+        unrated=unrated,
+        game_mode=game_mode,
+    )
     if same_person(white_sid, black_sid):
         seen = set()
         for sid in (white_sid, black_sid):
@@ -156,7 +218,7 @@ def start_game(white_sid, black_sid, fair_game=False, levels_by_sid=None):
                 to=sid,
             )
         return False
-    if not charge_for_game(white_sid, black_sid):
+    if not charge_for_game(white_sid, black_sid, unrated=unrate):
         return False
     game_id = make_game_id()
     board = chess.Board()
@@ -165,7 +227,7 @@ def start_game(white_sid, black_sid, fair_game=False, levels_by_sid=None):
             white_sid: copy_levels_snapshot(levels_by_sid.get(white_sid)),
             black_sid: copy_levels_snapshot(levels_by_sid.get(black_sid)),
         }
-    elif fair_game:
+    elif fair:
         saved_levels = {
             white_sid: empty_levels_snapshot(),
             black_sid: empty_levels_snapshot(),
@@ -188,7 +250,9 @@ def start_game(white_sid, black_sid, fair_game=False, levels_by_sid=None):
         "state": "active",
         "rematch_requests": set(),
         "pending_capture": None,
-        "fair_game": bool(fair_game),
+        "game_mode": describe_game_mode(fair, unrate),
+        "fair_game": fair,
+        "unrated": unrate,
         "levels_by_sid": saved_levels,
     }
     state.sid_to_game[white_sid] = game_id
@@ -206,8 +270,10 @@ def start_game(white_sid, black_sid, fair_game=False, levels_by_sid=None):
             "gameId": game_id, "color": "white", "fen": board.fen(), "pieces": pieces,
             "you": white_name, "opponent": black_name,
             "yourPicture": white_pic, "opponentPicture": black_pic,
-            "fairGame": bool(fair_game),
-            "winRewardTokens": win_reward_amount(bool(fair_game)),
+            "gameMode": describe_game_mode(fair, unrate),
+            "fairGame": fair,
+            "unrated": unrate,
+            "winRewardTokens": win_reward_amount(fair_game=fair, unrated=unrate),
         },
         to=white_sid,
     )
@@ -217,8 +283,10 @@ def start_game(white_sid, black_sid, fair_game=False, levels_by_sid=None):
             "gameId": game_id, "color": "black", "fen": board.fen(), "pieces": pieces,
             "you": black_name, "opponent": white_name,
             "yourPicture": black_pic, "opponentPicture": white_pic,
-            "fairGame": bool(fair_game),
-            "winRewardTokens": win_reward_amount(bool(fair_game)),
+            "gameMode": describe_game_mode(fair, unrate),
+            "fairGame": fair,
+            "unrated": unrate,
+            "winRewardTokens": win_reward_amount(fair_game=fair, unrated=unrate),
         },
         to=black_sid,
     )
@@ -239,8 +307,12 @@ def pair_with(sid, partner_sid):
         return "unavailable"
     white_is_partner = secrets.randbelow(2) == 0
     white_sid, black_sid = (partner_sid, sid) if white_is_partner else (sid, partner_sid)
-    fair_game = bool(partner_info.get("fair_game"))
-    if not start_game(white_sid, black_sid, fair_game=fair_game):
+    fair_game, unrated = normalize_game_options(
+        game_mode=partner_info.get("game_mode"),
+        fair_game=bool(partner_info.get("fair_game")),
+        unrated=bool(partner_info.get("unrated")),
+    )
+    if not start_game(white_sid, black_sid, fair_game=fair_game, unrated=unrated):
         return "failed"
     state.waiting_players.pop(partner_sid, None)
     state.waiting_players.pop(sid, None)
@@ -248,7 +320,11 @@ def pair_with(sid, partner_sid):
 
 
 def win_reward_for_game(game):
-    return win_reward_amount(bool(game.get("fair_game")))
+    return win_reward_amount(
+        fair_game=bool(game.get("fair_game")),
+        unrated=bool(game.get("unrated")),
+        game_mode=game.get("game_mode"),
+    )
 
 
 def award_win_reward(game, winner):
@@ -259,8 +335,11 @@ def award_win_reward(game, winner):
     email = (user or {}).get("email")
     if not email:
         return
+    amount = win_reward_for_game(game)
+    if amount <= 0:
+        return
     color = "w" if winner == "white" else "b"
-    currency = db.award_tokens(email, color, win_reward_for_game(game))
+    currency = db.award_tokens(email, color, amount)
     payload = currency.to_dict()
     payload["found"] = True
     state.socketio.emit("currencyData", payload, to=winner_sid)

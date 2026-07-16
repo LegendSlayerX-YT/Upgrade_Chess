@@ -13,6 +13,7 @@ from chess_app.rooms import (
     end_game,
     leave_ended_game,
     levels_for_sid,
+    normalize_game_options,
     pair_with,
     remove_from_waiting,
     start_game,
@@ -83,14 +84,18 @@ def on_find_game(*_):
 @socketio.on("createWaitingGame")
 def on_create_waiting_game(payload):
     sid = request.sid
-    fair_game = bool((payload or {}).get("fairGame")) if isinstance(payload, dict) else False
+    fair_game, unrated = normalize_game_options(
+        fair_game=bool((payload or {}).get("fairGame")) if isinstance(payload, dict) else False,
+        unrated=bool((payload or {}).get("unrated")) if isinstance(payload, dict) else False,
+        game_mode=(payload or {}).get("gameMode") if isinstance(payload, dict) else None,
+    )
     with state.state_lock:
         if sid not in state.sid_to_user:
             emit("authError", {"reason": "login required"})
             return
         if state.sid_to_game.get(sid):
             return
-        add_to_waiting(sid, fair_game=fair_game)
+        add_to_waiting(sid, fair_game=fair_game, unrated=unrated)
         emit("waiting")
     broadcast_waiting_list()
 
@@ -172,7 +177,11 @@ def on_fetch_waiting_player_levels(payload):
             return
         name = waiting_player.get("name") or "Player"
         picture = waiting_player.get("picture")
-        fair_game = bool(waiting_player.get("fair_game"))
+        fair_game, unrated = normalize_game_options(
+            game_mode=waiting_player.get("game_mode"),
+            fair_game=bool(waiting_player.get("fair_game")),
+            unrated=bool(waiting_player.get("unrated")),
+        )
 
     levels = {"w": {}, "b": {}} if fair_game else levels_for_sid(target_sid)
     emit(
@@ -182,7 +191,8 @@ def on_fetch_waiting_player_levels(payload):
             "name": name,
             "picture": picture,
             "fairGame": fair_game,
-            "winRewardTokens": win_reward_amount(fair_game),
+            "unrated": unrated,
+            "winRewardTokens": win_reward_amount(fair_game=fair_game, unrated=unrated),
             "levels": levels,
         },
     )
@@ -588,6 +598,7 @@ def on_request_rematch():
                 new_white,
                 new_black,
                 fair_game=bool(game.get("fair_game")),
+                unrated=bool(game.get("unrated")),
                 levels_by_sid=saved,
             )
         else:

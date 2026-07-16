@@ -91,6 +91,7 @@ export const state = {
   board: null,
   myColor: null,
   gameActive: false,
+  currentGameMode: null,
   currentPieces: {},
   awaitingCapture: false,
   currentDuel: null,

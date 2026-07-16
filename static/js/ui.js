@@ -95,9 +95,11 @@ const findBtn = document.getElementById('findBtn');
 const findModal = document.getElementById('findModal');
 const findModalCloseBtn = document.getElementById('findModalCloseBtn');
 const findModalMessage = document.getElementById('findModalMessage');
+const queueOptionsEl = document.getElementById('queueOptions');
 const waitingPlayersListEl = document.getElementById('waitingPlayersList');
 const createWaitingBtn = document.getElementById('createWaitingBtn');
 const createFairWaitingBtn = document.getElementById('createFairWaitingBtn');
+const unratedToggleBtn = document.getElementById('unratedToggleBtn');
 const waitingPreviewModal = document.getElementById('waitingPreviewModal');
 const waitingPreviewCloseBtn = document.getElementById('waitingPreviewCloseBtn');
 const waitingPreviewAvatar = document.getElementById('waitingPreviewAvatar');
@@ -111,7 +113,50 @@ let waitingPreviewPlayer = null;
 let waitingPreviewLevels = null;
 let waitingPreviewSide = 'w';
 let waitingPreviewFairGame = false;
+let waitingPreviewUnrated = false;
 let waitingPreviewRewardTokens = null;
+let createQueueUnrated = false;
+
+function describeGameMode(fairGame = false, unrated = false) {
+  if (fairGame && unrated) return 'fair-unrated';
+  if (fairGame) return 'fair';
+  if (unrated) return 'unrated';
+  return 'regular';
+}
+
+function modeUsesEnergy(unrated = false) { return !unrated; }
+
+function modeSummary(fairGame, unrated, winRewardTokens) {
+  if (fairGame && unrated) {
+    return 'Fair unrated game: all pieces start at level 1, with no energy cost and no token reward.';
+  }
+  if (fairGame) {
+    return `Fair game: all pieces start at level 1 for both players. Winner gets ${winRewardTokens ?? 5} tokens.`;
+  }
+  if (unrated) {
+    return 'Unrated game: saved piece levels, no energy cost, and no token reward.';
+  }
+  return `Regular game: saved piece levels. Winner gets ${winRewardTokens ?? 10} tokens.`;
+}
+
+function waitingModeBadge(fairGame, unrated, winRewardTokens) {
+  if (fairGame && unrated) {
+    return 'Fair unrated &middot; all pieces Lv 1 &middot; no energy, no token win';
+  }
+  if (fairGame) {
+    return `Fair game &middot; all pieces Lv 1 &middot; ${winRewardTokens} token win`;
+  }
+  if (unrated) {
+    return 'Unrated game &middot; saved levels &middot; no energy, no token win';
+  }
+  return `Regular game &middot; saved levels &middot; ${winRewardTokens} token win`;
+}
+
+function syncUnratedToggle() {
+  unratedToggleBtn.textContent = `Unrated: ${createQueueUnrated ? 'On' : 'Off'}`;
+  unratedToggleBtn.setAttribute('aria-pressed', createQueueUnrated ? 'true' : 'false');
+  unratedToggleBtn.classList.toggle('is-on', createQueueUnrated);
+}
 
 function waitingPreviewSlotOrder(side) {
   const pawns = SLOT_DEFS.filter(s => s.type === 'p');
@@ -136,9 +181,11 @@ function renderWaitingPreviewGrid() {
       : 'No piece data loaded.';
     return;
   }
-  waitingPreviewMessage.textContent = waitingPreviewFairGame
-    ? `Fair game: all pieces start at level 1 for both players. Winner gets ${waitingPreviewRewardTokens ?? 5} tokens.`
-    : `Click a tab to inspect this player as White or Black. Winner gets ${waitingPreviewRewardTokens ?? 10} tokens.`;
+  waitingPreviewMessage.textContent = `${modeSummary(
+    waitingPreviewFairGame,
+    waitingPreviewUnrated,
+    waitingPreviewRewardTokens,
+  )} Click a tab to inspect this player as White or Black.`;
   const sideLevels = waitingPreviewLevels[waitingPreviewSide] || {};
   waitingPreviewGrid.innerHTML = waitingPreviewSlotOrder(waitingPreviewSide).map(({ slot, type, file }) => {
     const rank = waitingPreviewSide === 'w'
@@ -155,12 +202,13 @@ function renderWaitingPreviewGrid() {
   }).join('');
 }
 
-function showWaitingPreview({ sid, name, picture, fairGame, winRewardTokens }) {
+function showWaitingPreview({ sid, name, picture, fairGame, unrated, winRewardTokens }) {
   waitingPreviewRequestedSid = sid;
   waitingPreviewPlayer = { name: name || 'Player', picture: picture || FALLBACK_AVATAR };
   waitingPreviewLevels = null;
   waitingPreviewSide = 'w';
   waitingPreviewFairGame = !!fairGame;
+  waitingPreviewUnrated = !!unrated;
   waitingPreviewRewardTokens = winRewardTokens ?? null;
   waitingPreviewAvatar.src = waitingPreviewPlayer.picture;
   waitingPreviewAvatar.onerror = () => { waitingPreviewAvatar.onerror = null; waitingPreviewAvatar.src = FALLBACK_AVATAR; };
@@ -176,6 +224,7 @@ function hideWaitingPreview() {
   waitingPreviewLevels = null;
   waitingPreviewSide = 'w';
   waitingPreviewFairGame = false;
+  waitingPreviewUnrated = false;
   waitingPreviewRewardTokens = null;
   waitingPreviewGrid.innerHTML = '';
   waitingPreviewMessage.textContent = '';
@@ -183,11 +232,11 @@ function hideWaitingPreview() {
 
 export function renderWaitingList(players) {
   if (!players || players.length === 0) {
-    waitingPlayersListEl.innerHTML = '<div class="waiting-list-empty">No players waiting. Create a regular or fair game to wait for an opponent.</div>';
+    waitingPlayersListEl.innerHTML = '<div class="waiting-list-empty">No players waiting. Create a regular or fair game, and turn on unrated if you want no energy cost or token reward.</div>';
     return;
   }
   waitingPlayersListEl.innerHTML = players.map(p => `
-    <div class="waiting-row${p.is_self ? ' is-self' : ''}" data-sid="${p.sid}" data-fair-game="${p.fairGame ? '1' : '0'}" data-win-reward-tokens="${p.winRewardTokens ?? ''}"${p.is_self ? ' data-self="1"' : ''}>
+    <div class="waiting-row${p.is_self ? ' is-self' : ''}" data-sid="${p.sid}" data-fair-game="${p.fairGame ? '1' : '0'}" data-unrated="${p.unrated ? '1' : '0'}" data-win-reward-tokens="${p.winRewardTokens ?? ''}"${p.is_self ? ' data-self="1"' : ''}>
       ${p.is_self ? `
         <img src="${p.picture || FALLBACK_AVATAR}" alt="" onerror="this.onerror=null;this.src='${FALLBACK_AVATAR}'" />
       ` : `
@@ -197,10 +246,8 @@ export function renderWaitingList(players) {
       `}
       <div class="waiting-meta">
         <div class="waiting-name">${(p.name || 'Player').replace(/</g, '&lt;')}</div>
-        <div class="waiting-mode ${p.fairGame ? 'is-fair' : 'is-regular'}">
-          ${p.fairGame
-            ? `Fair game &middot; all pieces Lv 1 &middot; ${p.winRewardTokens} token win`
-            : `Regular game &middot; saved levels &middot; ${p.winRewardTokens} token win`}
+        <div class="waiting-mode is-${describeGameMode(!!p.fairGame, !!p.unrated)}">
+          ${waitingModeBadge(!!p.fairGame, !!p.unrated, p.winRewardTokens)}
         </div>
       </div>
       ${p.is_self ? '<div class="waiting-self-tag">self</div>' : '<div class="waiting-join">Join →</div>'}
@@ -210,14 +257,18 @@ export function renderWaitingList(players) {
 
 export function showFindModal() {
   findModal.classList.add('on');
+  refreshFindAvailability();
   if (state.imWaiting) {
-    findModalMessage.textContent = 'You are waiting for an opponent. Others can join you, or pick one below. Fair games use all level 1 pieces.';
+    findModalMessage.textContent = 'You are waiting for an opponent. Others can join you, or inspect the other queues below.';
+    queueOptionsEl.style.display = 'none';
     createWaitingBtn.style.display = 'none';
     createFairWaitingBtn.style.display = 'none';
   } else {
-    findModalMessage.textContent = 'Players waiting for an opponent. Click a row to join, or an avatar to inspect the setup. Fair games use all level 1 pieces.';
+    findModalMessage.textContent = 'Players waiting for an opponent. Choose regular or fair, then turn on unrated if you want no energy cost and no token reward.';
+    queueOptionsEl.style.display = '';
     createWaitingBtn.style.display = '';
     createFairWaitingBtn.style.display = '';
+    syncUnratedToggle();
   }
 }
 export function hideFindModal() {
@@ -225,18 +276,32 @@ export function hideFindModal() {
   hideWaitingPreview();
 }
 export function isFindModalOpen() { return findModal.classList.contains('on'); }
-// The Find Game button is enabled only when the base intent (signed in, not
-// already in a game) holds AND the player can afford a game. currencyData
-// updates re-apply the gate via refreshFindAvailability().
 let findBtnBaseEnabled = false;
 
 function hasEnoughEnergy() { return state.myEnergy >= GAME_ENERGY_COST; }
 
+function applyWaitingActionState(button, enabled, title = '') {
+  if (!button) return;
+  button.disabled = !enabled;
+  button.title = title;
+}
+
+function refreshWaitingActionAvailability() {
+  const enoughEnergy = hasEnoughEnergy();
+  const unrated = createQueueUnrated;
+  const needsEnergy = !unrated;
+  const energyTitle = needsEnergy && !enoughEnergy ? `Need ${GAME_ENERGY_COST} energy to play` : '';
+  applyWaitingActionState(createWaitingBtn, !needsEnergy || enoughEnergy, energyTitle);
+  applyWaitingActionState(createFairWaitingBtn, !needsEnergy || enoughEnergy, energyTitle);
+  if (unratedToggleBtn) {
+    unratedToggleBtn.title = unrated ? 'No energy cost. No token reward.' : '';
+  }
+}
+
 function applyFindBtnState() {
-  findBtn.disabled = !(findBtnBaseEnabled && hasEnoughEnergy());
-  findBtn.title = findBtnBaseEnabled && !hasEnoughEnergy()
-    ? `Need ${GAME_ENERGY_COST} energy to play`
-    : '';
+  findBtn.disabled = !findBtnBaseEnabled;
+  findBtn.title = '';
+  refreshWaitingActionAvailability();
 }
 
 export function setFindBtnEnabled(enabled) {
@@ -249,10 +314,6 @@ export function refreshFindAvailability() { applyFindBtnState(); }
 findBtn.addEventListener('click', () => {
   if (!state.isAuthenticated) {
     alert('Please sign in with Google first.');
-    return;
-  }
-  if (!hasEnoughEnergy()) {
-    showTopToast(`You need ${GAME_ENERGY_COST} energy to play.`);
     return;
   }
   socket.emit('findGame');
@@ -272,6 +333,7 @@ waitingPlayersListEl.addEventListener('click', (e) => {
       name,
       picture: avatar?.currentSrc || avatar?.src || FALLBACK_AVATAR,
       fairGame: row.dataset.fairGame === '1',
+      unrated: row.dataset.unrated === '1',
       winRewardTokens: Number(row.dataset.winRewardTokens) || null,
     });
     socket.emit('fetchWaitingPlayerLevels', { sid: partnerSid });
@@ -282,15 +344,33 @@ waitingPlayersListEl.addEventListener('click', (e) => {
   if (row.dataset.self) return;
   const partnerSid = row.dataset.sid;
   if (!partnerSid) return;
+  if (modeUsesEnergy(row.dataset.unrated === '1') && !hasEnoughEnergy()) {
+    showTopToast(`You need ${GAME_ENERGY_COST} energy to play rated games.`);
+    return;
+  }
   socket.emit('joinWaitingGame', { sid: partnerSid });
 });
 
 createWaitingBtn.addEventListener('click', () => {
-  socket.emit('createWaitingGame', { fairGame: false });
+  if (!createQueueUnrated && !hasEnoughEnergy()) {
+    showTopToast(`You need ${GAME_ENERGY_COST} energy to create a rated game.`);
+    return;
+  }
+  socket.emit('createWaitingGame', { fairGame: false, unrated: createQueueUnrated });
 });
 
 createFairWaitingBtn.addEventListener('click', () => {
-  socket.emit('createWaitingGame', { fairGame: true });
+  if (!createQueueUnrated && !hasEnoughEnergy()) {
+    showTopToast(`You need ${GAME_ENERGY_COST} energy to create a rated game.`);
+    return;
+  }
+  socket.emit('createWaitingGame', { fairGame: true, unrated: createQueueUnrated });
+});
+
+unratedToggleBtn.addEventListener('click', () => {
+  createQueueUnrated = !createQueueUnrated;
+  syncUnratedToggle();
+  refreshFindAvailability();
 });
 
 findModalCloseBtn.addEventListener('click', () => {
@@ -313,7 +393,7 @@ waitingPreviewTabs.forEach(btn => {
   });
 });
 
-socket.on('waitingPlayerLevels', ({ sid, name, picture, levels, fairGame, winRewardTokens }) => {
+socket.on('waitingPlayerLevels', ({ sid, name, picture, levels, fairGame, unrated, winRewardTokens }) => {
   if (!waitingPreviewRequestedSid || sid !== waitingPreviewRequestedSid) return;
   waitingPreviewRequestedSid = null;
   waitingPreviewPlayer = {
@@ -321,6 +401,7 @@ socket.on('waitingPlayerLevels', ({ sid, name, picture, levels, fairGame, winRew
     picture: picture || waitingPreviewPlayer?.picture || FALLBACK_AVATAR,
   };
   waitingPreviewFairGame = !!fairGame;
+  waitingPreviewUnrated = !!unrated;
   waitingPreviewRewardTokens = Number(winRewardTokens) || null;
   waitingPreviewAvatar.src = waitingPreviewPlayer.picture;
   waitingPreviewName.textContent = waitingPreviewPlayer.name;
@@ -372,10 +453,6 @@ modalCloseBtn.addEventListener('click', () => {
 });
 
 modalNewGameBtn.addEventListener('click', () => {
-  if (!hasEnoughEnergy()) {
-    showTopToast(`You need ${GAME_ENERGY_COST} energy to play.`);
-    return;
-  }
   hideEndModal();
   state.rematchRequestedByMe = false;
   socket.emit('findGame');
