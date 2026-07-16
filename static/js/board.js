@@ -1,4 +1,4 @@
-import { socket, state, Chess, PIECES_BASE } from './state.js';
+import { socket, state, Chess, PIECES_BASE, PAWN_FRONT_ABILITY_LEVEL } from './state.js';
 import {
   showTopToast, showEnPassantToast,
   setPlayerCard, hidePlayerCards, highlightActiveTurn,
@@ -25,6 +25,21 @@ function describeGameMode(fairGame = false, unrated = false) {
 function clearMoveHighlights() {
   document.querySelectorAll('#board .square-55d63').forEach(sq => {
     sq.classList.remove('highlight-move', 'highlight-capture');
+  });
+}
+
+function clearAbilityButtons() {
+  document.querySelectorAll('#board .pawn-ability-btn').forEach(btn => btn.remove());
+}
+
+let abilityButtonsQueued = false;
+
+function queueAbilityButtonsRender() {
+  if (abilityButtonsQueued) return;
+  abilityButtonsQueued = true;
+  requestAnimationFrame(() => {
+    abilityButtonsQueued = false;
+    renderAbilityButtons();
   });
 }
 
@@ -82,6 +97,48 @@ function canReachForAttack(from, to, type, color) {
   return false;
 }
 
+function canPawnUseAbility(source, target) {
+  const mover = state.currentPieces[source];
+  const targetPiece = state.currentPieces[target];
+  if (!mover || mover.type !== 'p' || (mover.level || 1) < PAWN_FRONT_ABILITY_LEVEL) return false;
+  if ((mover.ability_ready_on_cycle || 0) > state.turnCycle) return false;
+  if (!targetPiece || targetPiece.color === mover.color) return false;
+  const rankDelta = parseInt(target[1], 10) - parseInt(source[1], 10);
+  const forward = mover.color === 'w' ? 1 : -1;
+  return source[0] === target[0] && rankDelta === forward;
+}
+
+function renderAbilityButtons() {
+  clearAbilityButtons();
+  if (!state.gameActive || state.awaitingCapture || state.currentDuel) return;
+  if (state.chess.turn() !== state.myColor) return;
+
+  Object.entries(state.currentPieces).forEach(([source, piece]) => {
+    if (!piece || piece.color !== state.myColor || piece.type !== 'p') return;
+    const targetRank = parseInt(source[1], 10) + (piece.color === 'w' ? 1 : -1);
+    if (targetRank < 1 || targetRank > 8) return;
+    const target = `${source[0]}${targetRank}`;
+    if (!canPawnUseAbility(source, target)) return;
+
+    const squareEl = document.querySelector(`#board .square-${target}`);
+    if (!squareEl) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pawn-ability-btn';
+    btn.textContent = 'Ability';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearSelection();
+      state.awaitingCapture = true;
+      clearAbilityButtons();
+      socket.emit('useAbility', { from: source, to: target });
+    });
+    squareEl.appendChild(btn);
+  });
+}
+
 function isPromotionMove(source, target) {
   const piece = state.chess.get(source);
   if (!piece || piece.type !== 'p') return false;
@@ -117,6 +174,7 @@ export function clearSelection() {
   }
   state.selectedSquare = null;
   clearMoveHighlights();
+  queueAbilityButtonsRender();
 }
 
 // Returns: 'pending' | 'invalid' | 'no-visual' | 'move-visual'
@@ -127,6 +185,7 @@ function attemptMove(source, target) {
     if (legalPromo && legalPromo.captured) {
       // Capture-promotion: defer the choice until after the duel resolves.
       state.awaitingCapture = true;
+      queueAbilityButtonsRender();
       socket.emit('move', { from: source, to: target });
       return 'move-visual';
     }
@@ -148,12 +207,14 @@ function attemptMove(source, target) {
 
   if (isKingAttack) {
     state.awaitingCapture = true;
+    queueAbilityButtonsRender();
     socket.emit('move', { from: source, to: target });
     return 'no-visual';
   }
 
   if (legal.captured) {
     state.awaitingCapture = true;
+    queueAbilityButtonsRender();
     socket.emit('move', { from: source, to: target });
     return 'move-visual';
   }
@@ -168,6 +229,7 @@ function attemptMove(source, target) {
 
   socket.emit('move', { from: source, to: target });
   highlightActiveTurn();
+  queueAbilityButtonsRender();
   return 'move-visual';
 }
 
@@ -267,6 +329,7 @@ function bindBoardClicks() {
 
 function onSnapEnd() {
   state.board.position(state.chess.fen());
+  queueAbilityButtonsRender();
 }
 
 export function initPreviewBoard() {
@@ -292,6 +355,7 @@ export function startBoard(fen, color) {
   });
   state.gameActive = true;
   state.selectedSquare = null;
+  state.awaitingCapture = false;
   setFindBtnEnabled(false);
   setGameControlsEnabled(true);
   hideDrawPrompt();
@@ -300,10 +364,12 @@ export function startBoard(fen, color) {
   renderStats();
   highlightActiveTurn();
   bindBoardClicks();
+  queueAbilityButtonsRender();
 }
 
 export function endGame(payload) {
   state.gameActive = false;
+  clearAbilityButtons();
   clearSelection();
   setFindBtnEnabled(state.isAuthenticated);
   hidePlayerCards();
@@ -361,7 +427,7 @@ socket.on('joinFailed', ({ reason }) => {
   alert(reason || 'Could not join that game.');
 });
 
-socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentPicture, fairGame, unrated, winRewardTokens }) => {
+socket.on('paired', ({ color, fen, pieces, turnCycle, you, opponent, yourPicture, opponentPicture, fairGame, unrated, winRewardTokens }) => {
   state.imWaiting = false;
   hideEndModal();
   hideFindModal();
@@ -372,6 +438,7 @@ socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentP
   const meCode = color === 'white' ? 'w' : 'b';
   const oppCode = meCode === 'w' ? 'b' : 'w';
   state.currentGameMode = describeGameMode(!!fairGame, !!unrated);
+  state.turnCycle = turnCycle || 0;
   setPlayerCard('top', oppLabel, opponentPicture, oppColor, oppCode);
   setPlayerCard('bottom', youLabel, yourPicture, youColor, meCode);
   state.currentPieces = pieces || {};
@@ -385,13 +452,14 @@ socket.on('paired', ({ color, fen, pieces, you, opponent, yourPicture, opponentP
   }
 });
 
-socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant }) => {
+socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant, is_stationary_capture, turnCycle, ability_used, ability_damage, ability_killed }) => {
   if (is_en_passant) showEnPassantToast();
+  if (turnCycle != null) state.turnCycle = turnCycle;
   if (pieces) state.currentPieces = pieces;
   clearSelection();
   const attackerDied = combat && !combat.attacker_survived;
   if (state.chess.fen() !== fen) {
-    if (attackerDied) {
+    if (attackerDied || is_stationary_capture || ability_used) {
       try { state.chess.load(fen); } catch (_) {}
     } else {
       try {
@@ -402,10 +470,19 @@ socket.on('moveMade', ({ from, to, promotion, fen, pieces, combat, is_en_passant
     }
   }
   if (state.board) state.board.position(state.chess.fen());
+  if (ability_used) {
+    showTopToast(
+      ability_killed
+        ? `Ability destroyed the piece for ${ability_damage} damage.`
+        : `Ability hit for ${ability_damage} damage.`,
+      2600,
+    );
+  }
   renderStats();
   highlightActiveTurn();
 
   state.awaitingCapture = false;
+  queueAbilityButtonsRender();
   if (state.currentDuel) {
     const d = state.currentDuel;
     state.currentDuel = null;
@@ -418,6 +495,7 @@ socket.on('illegalMove', ({ reason }) => {
   state.awaitingCapture = false;
   clearSelection();
   if (state.board) state.board.position(state.chess.fen());
+  queueAbilityButtonsRender();
 });
 
 socket.on('drawOfferSent', () => {

@@ -9,6 +9,7 @@ from db.connection import connect
 
 ENERGY_REGEN_PER_HOUR = 1  # energy regenerated per hour of elapsed real time
 ENERGY_MAX = 50  # hard cap; regen and grants never push energy above this
+NEW_PLAYER_STARTING_ENERGY = 25
 
 # Settle a row's energy: credit the energy accrued since `energy_updated_at`
 # (ENERGY_REGEN_PER_HOUR per hour), clamp to ENERGY_MAX, and advance the
@@ -91,6 +92,14 @@ def fetch_currency(email: str) -> Optional[Currency]:
     with connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
+                """
+                INSERT INTO players.currency_data (email, white_tokens, black_tokens, energy)
+                VALUES (%s, 0, 0, %s)
+                ON CONFLICT (email) DO NOTHING
+                """,
+                (email, NEW_PLAYER_STARTING_ENERGY),
+            )
+            cur.execute(
                 f"""
                 UPDATE players.currency_data
                 SET {_SETTLE_ENERGY}
@@ -151,13 +160,13 @@ def award_tokens(email: str, color: str, amount: int) -> Currency:
             cur.execute(
                 """
                 INSERT INTO players.currency_data (email, white_tokens, black_tokens, energy)
-                VALUES (%s, %s, %s, 0)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (email) DO UPDATE
                 SET white_tokens = players.currency_data.white_tokens + EXCLUDED.white_tokens,
                     black_tokens = players.currency_data.black_tokens + EXCLUDED.black_tokens
                 RETURNING email, white_tokens, black_tokens, energy
                 """,
-                (email, white_delta, black_delta),
+                (email, white_delta, black_delta, NEW_PLAYER_STARTING_ENERGY),
             )
             row = cur.fetchone()
     return _row_to_currency(row)

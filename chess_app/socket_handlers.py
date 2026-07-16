@@ -5,8 +5,13 @@ from flask_socketio import emit
 import db
 from chess_app import state
 from chess_app.auth import read_session_cookie, verify_google_credential
-from chess_app.chess_logic import PROMO_LETTER_TO_PIECE, SLOT_TYPES, can_attack_king
-from chess_app.game_engine import commit_move
+from chess_app.chess_logic import (
+    PROMO_LETTER_TO_PIECE,
+    SLOT_TYPES,
+    can_attack_king,
+    can_use_pawn_front_ability,
+)
+from chess_app.game_engine import commit_move, commit_pawn_front_ability
 from chess_app.rooms import (
     add_to_waiting,
     broadcast_waiting_list,
@@ -384,6 +389,44 @@ def on_move(payload):
             return
 
         commit_move(game, candidate, move_info, san, player_color)
+
+
+@socketio.on("useAbility")
+def on_use_ability(payload):
+    sid = request.sid
+    with state.state_lock:
+        game_id = state.sid_to_game.get(sid)
+        game = state.games.get(game_id) if game_id else None
+        if not game or game["state"] != "active":
+            return
+        if game.get("pending_capture"):
+            emit("illegalMove", {"reason": "capture pending"})
+            return
+        board = game["board"]
+        turn_color = "white" if board.turn == chess.WHITE else "black"
+        player_color = "white" if sid == game["white"] else "black"
+        if turn_color != player_color:
+            emit("illegalMove", {"reason": "not your turn"})
+            return
+
+        try:
+            from_alg = payload["from"]
+            to_alg = payload["to"]
+        except (KeyError, TypeError):
+            emit("illegalMove", {"reason": "illegal"})
+            return
+
+        if not can_use_pawn_front_ability(
+            board,
+            game["pieces"],
+            from_alg,
+            to_alg,
+            game.get("turn_cycle", 0),
+        ):
+            emit("illegalMove", {"reason": "illegal"})
+            return
+
+        commit_pawn_front_ability(game, from_alg, to_alg, player_color)
 
 
 @socketio.on("offerDraw")

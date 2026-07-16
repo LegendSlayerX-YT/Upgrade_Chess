@@ -33,6 +33,9 @@ PROMO_LETTER_TO_PIECE = {
     "q": chess.QUEEN, "r": chess.ROOK, "b": chess.BISHOP, "n": chess.KNIGHT,
 }
 
+PAWN_FRONT_ATTACK_LEVEL = 25
+PAWN_FRONT_ABILITY_COOLDOWN_TURNS = 3
+
 
 def clamp_level(n):
     try:
@@ -75,10 +78,12 @@ def build_pieces(white_levels, black_levels):
         pieces[w_square] = {
             "id": "w" + slot, "type": piece_type, "color": "w",
             "level": w_level, "hp": w_stats["hp"], "dmg": w_stats["dmg"],
+            "ability_ready_on_cycle": 0,
         }
         pieces[b_square] = {
             "id": "b" + slot, "type": piece_type, "color": "b",
             "level": b_level, "hp": b_stats["hp"], "dmg": b_stats["dmg"],
+            "ability_ready_on_cycle": 0,
         }
     return pieces
 
@@ -91,6 +96,46 @@ def can_attack_king(board, candidate, target_sq):
     legal = candidate in board.legal_moves
     board.set_piece_at(target_sq, target)
     return legal
+
+
+def can_use_pawn_front_ability(board, pieces, from_alg, to_alg, turn_cycle=0):
+    attacker = (pieces or {}).get(from_alg)
+    defender = (pieces or {}).get(to_alg)
+    if not attacker or not defender:
+        return False
+    if attacker["type"] != "p" or attacker["level"] < PAWN_FRONT_ATTACK_LEVEL:
+        return False
+    if attacker.get("ability_ready_on_cycle", 0) > turn_cycle:
+        return False
+    if attacker["color"] == defender["color"]:
+        return False
+
+    file_delta = ord(to_alg[0]) - ord(from_alg[0])
+    rank_delta = int(to_alg[1]) - int(from_alg[1])
+    forward = 1 if attacker["color"] == "w" else -1
+    if file_delta != 0 or rank_delta != forward:
+        return False
+
+    from_sq = chess.parse_square(from_alg)
+    to_sq = chess.parse_square(to_alg)
+    board_attacker = board.piece_at(from_sq)
+    board_defender = board.piece_at(to_sq)
+    if not board_attacker or board_attacker.piece_type != chess.PAWN:
+        return False
+    if board_attacker.color != (attacker["color"] == "w"):
+        return False
+    if not board_defender or board_defender.color == board_attacker.color:
+        return False
+
+    if attacker["dmg"] < defender["hp"]:
+        return True
+
+    board_after = board.copy(stack=False)
+    board_after.remove_piece_at(to_sq)
+    king_sq = board_after.king(board_attacker.color)
+    if king_sq is None:
+        return False
+    return not board_after.is_attacked_by(not board_attacker.color, king_sq)
 
 
 def resolve_combat(attacker, defender):
@@ -122,6 +167,22 @@ def apply_move_to_pieces(pieces, move_info, combat_result=None):
         return nxt
 
     if move_info["is_capture"] and combat_result:
+        if move_info.get("is_stationary_capture"):
+            defender_sq = move_info["to"]
+            if combat_result["attacker_survived"]:
+                nxt.pop(defender_sq, None)
+                survivor = dict(mover)
+                survivor["hp"] = combat_result["attacker_hp"]
+                nxt[move_info["from"]] = survivor
+            else:
+                defender = pieces.get(defender_sq)
+                nxt.pop(move_info["from"], None)
+                if defender:
+                    survivor = dict(defender)
+                    survivor["hp"] = combat_result["defender_hp"]
+                    nxt[defender_sq] = survivor
+            return nxt
+
         if move_info["is_en_passant"]:
             ep_rank = "5" if move_info["color"] == "w" else "4"
             defender_sq = move_info["to"][0] + ep_rank

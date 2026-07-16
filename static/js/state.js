@@ -61,6 +61,8 @@ export const TYPE_NAME = { p: 'P', n: 'N', b: 'B', r: 'R', q: 'Q', k: 'K' };
 export const TYPE_FULL = { p: 'Pawn', n: 'Knight', b: 'Bishop', r: 'Rook', q: 'Queen', k: 'King' };
 export const DEFAULT_UPGRADE_COSTS = { p: 1, n: 3, b: 3, r: 5, q: 8 };
 export const MAX_LEVEL = 99;
+export const PAWN_FRONT_ABILITY_LEVEL = 25;
+export const PAWN_FRONT_ABILITY_COOLDOWN = 3;
 
 export const SLOT_TO_W_SQUARE = {
   Ra:'a1', Nb:'b1', Bc:'c1', Q:'d1', K:'e1', Bf:'f1', Ng:'g1', Rh:'h1',
@@ -93,6 +95,7 @@ export const state = {
   gameActive: false,
   currentGameMode: null,
   currentPieces: {},
+  turnCycle: 0,
   awaitingCapture: false,
   currentDuel: null,
   selectedSquare: null,
@@ -120,8 +123,8 @@ export function buildPreviewPieces() {
     const bLvl = clampLevel(state.myLevels.b[slot] ?? 1);
     const wStats = pieceStats(type, wLvl);
     const bStats = pieceStats(type, bLvl);
-    pieces[wSq] = { id: 'w' + slot, type, color: 'w', level: wLvl, hp: wStats.hp, dmg: wStats.dmg };
-    pieces[bSq] = { id: 'b' + slot, type, color: 'b', level: bLvl, hp: bStats.hp, dmg: bStats.dmg };
+    pieces[wSq] = { id: 'w' + slot, type, color: 'w', level: wLvl, hp: wStats.hp, dmg: wStats.dmg, ability_ready_on_cycle: 0 };
+    pieces[bSq] = { id: 'b' + slot, type, color: 'b', level: bLvl, hp: bStats.hp, dmg: bStats.dmg, ability_ready_on_cycle: 0 };
   }
   return pieces;
 }

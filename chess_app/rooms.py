@@ -244,6 +244,7 @@ def start_game(
         "id": game_id,
         "board": board,
         "pieces": pieces,
+        "turn_cycle": 0,
         "white": white_sid,
         "black": black_sid,
         "draw_offer_by": None,
@@ -268,6 +269,7 @@ def start_game(
         "paired",
         {
             "gameId": game_id, "color": "white", "fen": board.fen(), "pieces": pieces,
+            "turnCycle": 0,
             "you": white_name, "opponent": black_name,
             "yourPicture": white_pic, "opponentPicture": black_pic,
             "gameMode": describe_game_mode(fair, unrate),
@@ -281,6 +283,7 @@ def start_game(
         "paired",
         {
             "gameId": game_id, "color": "black", "fen": board.fen(), "pieces": pieces,
+            "turnCycle": 0,
             "you": black_name, "opponent": white_name,
             "yourPicture": black_pic, "opponentPicture": white_pic,
             "gameMode": describe_game_mode(fair, unrate),

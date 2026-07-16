@@ -163,12 +163,12 @@ export function playCaptureAnimation({
 
 socket.on('captureWindow', ({
   from, to, attackerColor, defenderSquare,
-  attackerHp, defenderHp, turn,
+  attackerHp, defenderHp, turn, isStationaryCapture,
 }) => {
   const localIsAttacker = attackerColor === state.myColor;
 
   // Opponent's chessboard hasn't moved the attacker yet; do a visual-only move.
-  if (!localIsAttacker && state.board) {
+  if (!localIsAttacker && !isStationaryCapture && state.board) {
     state.board.move(`${from}-${to}`);
   }
 
@@ -185,7 +185,7 @@ socket.on('captureWindow', ({
   }
   state.currentDuel = playCaptureAnimation({
     capturedSquare,
-    attackerSquare: to,
+    attackerSquare: isStationaryCapture ? null : to,
     isEnPassant: isEP,
     attackerType: mover.type,
     attackerColor: mover.color,
