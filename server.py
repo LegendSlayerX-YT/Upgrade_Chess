@@ -6,6 +6,6 @@ from chess_app import http_routes  # noqa: F401  registers Flask routes
 from chess_app import socket_handlers  # noqa: F401  registers Socket.IO handlers
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5001))
+    port = int(os.environ.get("PORT", 8001))
     print(f"ChessRPG server listening on http://localhost:{port}")
     socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)

@@ -5,5 +5,3 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-docker_build.sh
-docker_run.sh
