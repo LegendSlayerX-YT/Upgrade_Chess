@@ -17,7 +17,7 @@ When pawns promote, the promotion gives you a piece of the same level as the paw
 <br>
 Pawns always win an en passant initiated by itself
 <br>
-- NEW FEATURE!
+- ### NEW FEATURE!
 <br>
 Pawns at lvl 25+ now have the ability to deal their regular damage once to a piece directly in front of it with a 3 turn cooldown(doesn't stack).
 ## Account
