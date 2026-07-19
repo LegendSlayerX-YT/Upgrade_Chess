@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.env_docker
 .env.local
 __pycache__/
 *.pyc
