@@ -19,6 +19,6 @@ Pawns always win an en passant initiated by itself
 <br>
 NEW FEATURE!
 <br>
-Pawns now have the ability to deal their regular damage once to a piece directly in front of it with a 3 turn cooldown(doesn't stack).
+Pawns at lvl 25+ now have the ability to deal their regular damage once to a piece directly in front of it with a 3 turn cooldown(doesn't stack).
 ## Account
 Only Google sign-in is allowed
